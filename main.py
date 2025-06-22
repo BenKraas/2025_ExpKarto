@@ -208,27 +208,77 @@ def main():
 	def save_results():
 		icons = state["icon_coords"]
 		guesses = state["guesses"]
-		icon_points = [(x, y) for x, y, _, _ in icons] if icons else []
-		guess_points = guesses[:]
-		# Save all metadata
-		result = {
-			"icon_coords": icon_points,
-			"icon_attrs": [attrs for _, _, attrs, _ in icons] if icons else [],
-			"guesses": guess_points,
-			"question_answer": state["question_answer"],
-			"timestamp": time.time()
-		}
+		icon_points = [(x, y, attrs["angle"]) for x, y, attrs, _ in icons] if icons else []
+		icon_attrs = [attrs for _, _, attrs, _ in icons] if icons else []
+
+		# --- Match guesses to icons (one-to-one, nearest) ---
+		if icons:
+			icon_centers = [(x, y) for x, y, _, _ in icons]
+			guess_points = guesses[:]
+			assigned = set()
+			icon_to_guess = [None] * len(icon_centers)
+			guess_used = set()
+			# For each icon, find nearest unused guess
+			for i, (ix, iy) in enumerate(icon_centers):
+				min_dist = float('inf')
+				min_j = None
+				for j, (gx, gy) in enumerate(guess_points):
+					if j in guess_used:
+						continue
+					dist = math.hypot(ix - gx, iy - gy)
+					if dist < min_dist:
+						min_dist = dist
+						min_j = j
+				if min_j is not None:
+					icon_to_guess[i] = min_j
+					guess_used.add(min_j)
+			# If more guesses than icons, extra guesses are ignored
+
+		else:
+			icon_to_guess = []
+
+		# --- Build per-icon result dict ---
+		exp_result = {}
+		for idx, (icon, attrs) in enumerate(zip(icon_points, icon_attrs)):
+			icon_x, icon_y, icon_angle = icon
+			icon_label = f"icon_{idx+1}"
+			guess_idx = icon_to_guess[idx] if icons and idx < len(icon_to_guess) else None
+			if guess_idx is not None and guess_idx < len(guesses):
+				guess_x, guess_y = guesses[guess_idx]
+				dist_x = guess_x - icon_x
+				dist_y = guess_y - icon_y
+				euclidian = math.hypot(dist_x, dist_y)
+				icon_guess = (guess_x, guess_y)
+				dist_to_icon = (dist_x, dist_y, euclidian)
+			else:
+				icon_guess = None
+				dist_to_icon = (None, None, None)
+				euclidian = None
+
+			exp_result[icon_label] = {
+				"icon_pos": (icon_x, icon_y, icon_angle),
+				"icon_guess": icon_guess,
+				"dist_to_icon": dist_to_icon,
+				"euclidian_dist": euclidian,
+				"metadata": attrs
+			}
+
+		# --- Save all metadata ---
 		json_path = os.path.join(os.path.dirname(__file__), "results.json")
 		try:
 			with open(json_path, "r") as f:
 				data = json.load(f)
 		except Exception:
 			data = {}
+
 		if participant_name not in data:
 			data[participant_name] = {}
 		if test_type not in data[participant_name]:
 			data[participant_name][test_type] = {}
-		data[participant_name][test_type][str(n_test)] = result
+
+		exp_key = f"exp_{n_test}"
+		data[participant_name][test_type][exp_key] = exp_result
+
 		with open(json_path, "w") as f:
 			json.dump(data, f, indent=2)
 
