@@ -3,10 +3,8 @@ import sys
 import os
 import random
 import math
-import json
 import time
 import pygame
-import ctypes
 import io
 from PIL import Image
 import cairosvg
@@ -133,61 +131,6 @@ def optimal_icon_guess_assignment(icon_points, guesses):
             icon_to_guess[i] = j
     return icon_to_guess
 
-def save_results(icon_coords, guesses, results_path, participant_name, test_type, n_test, center_x=None, center_y=None):
-    # Match guesses to icons (optimal, one-to-one)
-    icon_points = [(x, y, angle) for (x, y, angle, dist) in icon_coords]
-    icon_attrs = []
-    for (x, y, angle, dist) in icon_coords:
-        x_c_dist = x - center_x if center_x is not None else None
-        y_c_dist = y - center_y if center_y is not None else None
-        icon_attrs.append({"distance": dist, "angle": angle, "x_c_dist": x_c_dist, "y_c_dist": y_c_dist})
-    guesses_local = guesses[:]
-    icon_to_guess = optimal_icon_guess_assignment(icon_points, guesses_local)
-    exp_result = {}
-    for idx, (icon, attrs) in enumerate(zip(icon_points, icon_attrs)):
-        icon_x, icon_y, icon_angle = icon
-        icon_label = f"icon_{idx+1}"
-        guess_idx = icon_to_guess[idx] if idx < len(icon_to_guess) else None
-        if guess_idx is not None and guess_idx < len(guesses_local):
-            guess_x, guess_y = guesses_local[guess_idx]
-            dist_x = guess_x - icon_x
-            dist_y = guess_y - icon_y
-            euclidian = math.hypot(dist_x, dist_y)
-            icon_guess = (guess_x, guess_y)
-            dist_to_icon = (dist_x, dist_y, euclidian)
-            guess_x_c_dist = guess_x - center_x if center_x is not None else None
-            guess_y_c_dist = guess_y - center_y if center_y is not None else None
-        else:
-            icon_guess = None
-            dist_to_icon = (None, None, None)
-            euclidian = None
-            guess_x_c_dist = None
-            guess_y_c_dist = None
-        exp_result[icon_label] = {
-            "icon_pos": (icon_x, icon_y, icon_angle),
-            "icon_guess": icon_guess,
-            "dist_to_icon": dist_to_icon,
-            "euclidian_dist": euclidian,
-            "metadata": attrs,
-            "guess_x_c_dist": guess_x_c_dist,
-            "guess_y_c_dist": guess_y_c_dist
-        }
-    try:
-        with open(results_path, "r") as f:
-            data = json.load(f)
-    except Exception as e:
-        logging.warning(f"Could not read results file: {e}")
-        data = {}
-    if participant_name not in data:
-        data[participant_name] = {}
-    if test_type not in data[participant_name]:
-        data[participant_name][test_type] = {}
-    exp_key = f"exp_{n_test}"
-    data[participant_name][test_type][exp_key] = exp_result
-    with open(results_path, "w") as f:
-        json.dump(data, f, indent=2)
-    logging.info(f"Results saved for participant={participant_name}, test_type={test_type}, n_test={n_test}")
-
 def draw_debug_overlay(exp_result, screen, icon_size_px, font, center_x, center_y):
     """
     Draw debug overlay: icons, guesses, lines, and distances, including cardinals.
@@ -263,7 +206,41 @@ def draw_debug_overlay(exp_result, screen, icon_size_px, font, center_x, center_
             text_surf = font.render(label, True, (180, 0, 180))
             screen.blit(text_surf, (mid_x, mid_y))
 
-def main(rebuild_svg=False, png_res=128, debug=False, log_file_level=logging.DEBUG, log_console_level=logging.INFO):
+def pick_random_base_image(test_type):
+    """
+    Picks a random PNG from /res/base/{test_type}/.
+    """
+    base_dir = os.path.join(os.path.dirname(__file__), "res", "base", test_type)
+    pngs = [f for f in os.listdir(base_dir) if f.lower().endswith('.png')]
+    if not pngs:
+        raise FileNotFoundError(f"No PNG images found in {base_dir}")
+    return os.path.join(base_dir, random.choice(pngs))
+
+def run_experiment(
+    participant_name,
+    test_type,
+    n_test,
+    rebuild_svg=False,
+    debug=False,
+    log_file_level=logging.DEBUG,
+    log_console_level=logging.INFO,
+    image_size_cm=30,
+    png_res=128,
+    icon_size_px=24,
+    n_icons=5,
+    distances=None,
+    icon_display_time_sec_tuple=(25, 15, 25),  # (icons, question, guess)
+    results_path=None
+):
+    """
+    Run a single experiment session.
+    Returns a dictionary with experiment data for saving.
+    """
+    if distances is None:
+        distances = [110, 220, 330, 440, 550]
+    if results_path is None:
+        results_path = os.path.join(os.path.dirname(__file__), "results.json")
+
     # --- Logging ---
     log_path = os.path.join(os.path.dirname(__file__), "experiment.log")
     setup_logging(log_path, file_level=log_file_level, console_level=log_console_level)
@@ -274,41 +251,51 @@ def main(rebuild_svg=False, png_res=128, debug=False, log_file_level=logging.DEB
     screen_width, screen_height = info.current_w, info.current_h
     screen = pygame.display.set_mode((screen_width, screen_height), pygame.FULLSCREEN)
     pygame.display.set_caption("Experiment")
-    logging.info(f"Screen size: {screen_width}x{screen_height}")
+    logging.info(f"Screen size: {screen_width}x{screen_height} px")
+    logging.info(f"Screen physical size (if known): {screen_width / 96 * 2.54:.1f}cm x {screen_height / 96 * 2.54:.1f}cm (assuming 96 DPI)")
+    logging.info(f"Configured image size: {image_size_cm} cm, PNG icon resolution: {png_res}px")
 
-    # --- Parameters ---
-    image_path = "05_round_cross.png"
+    # --- Pick base image for test_type ---
+    image_path = pick_random_base_image(test_type)
 
-    # --- Calculate image height in pixels for 30 cm ---
-    # Try to get DPI from system, otherwise use a common default (96)
+    # --- Calculate image height in pixels for image_size_cm ---
     try:
-        # Windows: use ctypes to get system DPI
+        import ctypes
+        import sys
         if sys.platform.startswith("win"):
             user32 = ctypes.windll.user32
-            user32.SetProcessDPIAware()
-            dpi = user32.GetDpiForSystem()
+            gdi32 = ctypes.windll.gdi32
+            # Try GetDpiForWindow (Windows 10 creators update+)
+            try:
+                hwnd = user32.GetForegroundWindow()
+                get_dpi_for_window = user32.GetDpiForWindow
+                get_dpi_for_window.restype = ctypes.c_uint
+                dpi = get_dpi_for_window(hwnd)
+            except AttributeError:
+                # Try GetDpiForSystem (Windows 10+)
+                try:
+                    dpi = user32.GetDpiForSystem()
+                except AttributeError:
+                    # Fallback: GetDeviceCaps
+                    hdc = user32.GetDC(0)
+                    LOGPIXELSX = 88
+                    dpi = gdi32.GetDeviceCaps(hdc, LOGPIXELSX)
+                    user32.ReleaseDC(0, hdc)
         else:
-            # Fallback for non-Windows systems
             dpi = 96
     except Exception:
         dpi = 96  # fallback
-
+    
     cm_per_inch = 2.54
-    image_height_cm = 30
-    image_height_px = int((image_height_cm / cm_per_inch) * dpi)
-
-    icon_size_px = 24
-    n_icons = 5
-    distances = [110, 220, 330, 440, 550]
-    icon_display_time_sec = 20
-    participant_name = "P01"
-    test_type = "occluded_circle"
-    n_test = 1
-    results_path = os.path.join(os.path.dirname(__file__), "results.json")
+    image_height_px = int((image_size_cm / cm_per_inch) * dpi)
 
     # --- Load resources ---
     img = display_image_fullscreen(image_path, image_height_px)
     icon_surfaces = load_icon_surfaces(icon_size_px)
+    icon_surface_paths = [
+        os.path.join(os.path.dirname(__file__), "res", "icons", f)
+        for f in sorted([f for f in os.listdir(os.path.join(os.path.dirname(__file__), "res", "icons")) if f.lower().endswith('.png')])
+    ]
     logging.info(f"Loaded {len(icon_surfaces)} icon surfaces")
 
     # --- State ---
@@ -328,14 +315,16 @@ def main(rebuild_svg=False, png_res=128, debug=False, log_file_level=logging.DEB
     center_x, center_y = screen_width // 2, screen_height // 2
     icon_coords = scatter_icons_around_center(center_x, center_y, distances, n_icons)
     icon_assignments = [random.choice(icon_surfaces) for _ in range(n_icons)]
+    icon_assignment_paths = [icon_surface_paths[icon_surfaces.index(icon)] for icon in icon_assignments]
     logging.debug(f"Icon coordinates: {icon_coords}")
 
     # --- Timers ---
-    icon_phase_start = time.time()
-    icon_phase_end = icon_phase_start + icon_display_time_sec
-
-    def save_results_local():
-        save_results(icon_coords, guesses, results_path, participant_name, test_type, n_test, center_x=center_x, center_y=center_y)
+    # Use tuple for phase durations
+    icon_phase_duration = icon_display_time_sec_tuple[0]
+    question_phase_duration = icon_display_time_sec_tuple[1]
+    guess_phase_duration = icon_display_time_sec_tuple[2]
+    phase_start_time = time.time()
+    phase_end_time = phase_start_time + icon_phase_duration
 
     def get_exp_result_for_debug():
         # Helper to get the current exp_result dict for debug overlay
@@ -381,6 +370,11 @@ def main(rebuild_svg=False, png_res=128, debug=False, log_file_level=logging.DEB
     # --- Main loop ---
     while running:
         screen.fill((0, 0, 0))
+        now = time.time()
+        elapsed = now - phase_start_time
+        remaining = max(0, int(phase_end_time - now))
+        timer_text = f"Time: {int(elapsed)}s / {int(phase_end_time - phase_start_time)}s (left: {remaining}s)"
+
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 logging.info("Received QUIT event")
@@ -391,6 +385,8 @@ def main(rebuild_svg=False, png_res=128, debug=False, log_file_level=logging.DEB
                         logging.info("Phase changed: icons -> question")
                         phase = "question"
                         input_text = ""
+                        phase_start_time = time.time()
+                        phase_end_time = phase_start_time + question_phase_duration
                     elif event.key == pygame.K_ESCAPE:
                         esc_counter += 1
                         if esc_counter >= 3:
@@ -405,6 +401,8 @@ def main(rebuild_svg=False, png_res=128, debug=False, log_file_level=logging.DEB
                         input_text = ""
                         phase = "guess"
                         logging.info("Phase changed: question -> guess")
+                        phase_start_time = time.time()
+                        phase_end_time = phase_start_time + guess_phase_duration
                     elif event.key == pygame.K_BACKSPACE:
                         input_text = input_text[:-1]
                     elif event.key == pygame.K_ESCAPE:
@@ -418,7 +416,6 @@ def main(rebuild_svg=False, png_res=128, debug=False, log_file_level=logging.DEB
                             input_text += event.unicode
                 elif phase == "guess":
                     if event.key == pygame.K_RETURN:
-                        save_results_local()
                         logging.info("Experiment finished, exiting")
                         running = False
                     elif event.key == pygame.K_ESCAPE:
@@ -433,14 +430,12 @@ def main(rebuild_svg=False, png_res=128, debug=False, log_file_level=logging.DEB
                 if event.button == 1:  # Left click to add
                     if len(guesses) < n_icons:
                         guesses.append((mx, my))
-                        save_results_local()
                         logging.info(f"Guess added at ({mx}, {my})")
                 elif event.button == 3:  # Right click to remove nearest
                     if guesses:
                         dists = [math.hypot(mx - gx, my - gy) for gx, gy in guesses]
                         idx = dists.index(min(dists))
                         removed = guesses.pop(idx)
-                        save_results_local()
                         logging.info(f"Guess removed at {removed}")
 
         # --- Phase logic ---
@@ -453,10 +448,16 @@ def main(rebuild_svg=False, png_res=128, debug=False, log_file_level=logging.DEB
                 icon_rect = icon_surf.get_rect(center=(x, y))
                 screen.blit(icon_surf, icon_rect)
             # Timer: auto-advance
-            if time.time() >= icon_phase_end:
+            if now >= phase_end_time:
                 phase = "question"
                 input_text = ""
+                phase_start_time = time.time()
+                phase_end_time = phase_start_time + question_phase_duration
                 logging.info("Icon phase timed out, moving to question phase")
+            # Draw timer at bottom
+            instr = "Press Enter to continue, Esc x3 to exit"
+            t_surf = font.render(f"{instr} | {timer_text}", True, (200, 200, 200))
+            screen.blit(t_surf, (center_x - t_surf.get_width() // 2, screen_height - 60))
         elif phase == "question":
             # Draw question text
             qsurf = font.render(question, True, (255, 255, 255))
@@ -464,6 +465,18 @@ def main(rebuild_svg=False, png_res=128, debug=False, log_file_level=logging.DEB
             # Draw input text
             insurf = input_font.render(input_text, True, (255, 255, 0))
             screen.blit(insurf, (center_x - insurf.get_width() // 2, center_y))
+            # Timer: auto-advance
+            if now >= phase_end_time:
+                question_answer = input_text
+                input_text = ""
+                phase = "guess"
+                phase_start_time = time.time()
+                phase_end_time = phase_start_time + guess_phase_duration
+                logging.info("Question phase timed out, moving to guess phase")
+            # Draw timer at bottom
+            instr = "Type answer, Enter to continue, Esc x3 to exit"
+            t_surf = font.render(f"{instr} | {timer_text}", True, (200, 200, 200))
+            screen.blit(t_surf, (center_x - t_surf.get_width() // 2, screen_height - 60))
         elif phase == "guess":
             # Draw main image
             img_rect = img.get_rect(center=(center_x, center_y))
@@ -476,22 +489,271 @@ def main(rebuild_svg=False, png_res=128, debug=False, log_file_level=logging.DEB
             if debug:
                 exp_result = get_exp_result_for_debug()
                 draw_debug_overlay(exp_result, screen, icon_size_px, font, center_x, center_y)
-            # Draw instructions
-            instr = "Left click: add guess, Right click: remove nearest, Enter: finish"
-            isurf = font.render(instr, True, (200, 200, 200))
-            screen.blit(isurf, (center_x - isurf.get_width() // 2, screen_height - 60))
+            # Timer: auto-advance
+            if now >= phase_end_time:
+                logging.info("Guess phase timed out, finishing experiment")
+                running = False
+            # Draw instructions and timer
+            instr = "Left click: add guess, Right click: remove nearest, Enter: finish, Esc x3 to exit"
+            t_surf = font.render(f"{instr} | {timer_text}", True, (200, 200, 200))
+            screen.blit(t_surf, (center_x - t_surf.get_width() // 2, screen_height - 60))
 
         pygame.display.flip()
         pygame.time.wait(10)
 
     pygame.quit()
     logging.info("Pygame quit, program exiting")
-    sys.exit()
+    # Prepare flat experiment result for saving
+    icon_points = [(x, y, angle) for (x, y, angle, dist) in icon_coords]
+    icon_attrs = []
+    for (x, y, angle, dist) in icon_coords:
+        x_c_dist = x - center_x
+        y_c_dist = y - center_y
+        icon_attrs.append({"distance": dist, "angle": angle, "x_c_dist": x_c_dist, "y_c_dist": y_c_dist})
+    guesses_local = guesses[:]
+    icon_to_guess = optimal_icon_guess_assignment(icon_points, guesses_local)
+
+    # --- Flat structure for CSV ---
+    points = {}
+    for idx, (icon, attrs) in enumerate(zip(icon_points, icon_attrs)):
+        icon_x, icon_y, icon_angle = icon
+        icon_label = str(idx + 1)
+        guess_idx = icon_to_guess[idx] if idx < len(icon_to_guess) else None
+
+        # Target info
+        target_x = icon_x
+        target_y = icon_y
+        target_degrees = math.degrees(icon_angle)
+        target_cd_x = attrs["x_c_dist"]
+        target_cd_y = attrs["y_c_dist"]
+        icon_path = icon_assignment_paths[idx] if idx < len(icon_assignment_paths) else None
+
+        # Guess info
+        if guess_idx is not None and guess_idx < len(guesses_local):
+            guess_x, guess_y = guesses_local[guess_idx]
+            dist_x = guess_x - icon_x
+            dist_y = guess_y - icon_y
+            euclidian = math.hypot(dist_x, dist_y)
+            guess_angle = math.degrees(math.atan2(guess_y - center_y, guess_x - center_x))
+            guess_cd_x = guess_x - center_x
+            guess_cd_y = guess_y - center_y
+        else:
+            guess_x = None
+            guess_y = None
+            guess_angle = None
+            guess_cd_x = None
+            guess_cd_y = None
+            euclidian = None
+
+        points[icon_label] = {
+            "target_x": target_x,
+            "target_y": target_y,
+            "target_degrees": target_degrees,
+            "target_cd_x": target_cd_x,
+            "target_cd_y": target_cd_y,
+            "icon_path": icon_path,
+            "guess_x": guess_x,
+            "guess_y": guess_y,
+            "guess_degrees": guess_angle,
+            "guess_cd_x": guess_cd_x,
+            "guess_cd_y": guess_cd_y,
+            "guess_eucldist": euclidian,
+        }
+
+    flat_result = {
+        "participant": participant_name,
+        "test_type": test_type,
+        "n_test": n_test,
+        "base_image_path": image_path,
+        "center_x": center_x,
+        "center_y": center_y,
+        "metadata": {k: v for k, v in enumerate(icon_attrs, 1)},
+        "points": points,
+        # Optionally: "question_answer": question_answer,
+    }
+
+    # --- Add experiment statistics ---
+    stats = calculate_experiment_statistics(flat_result)
+    flat_result["statistics"] = stats
+
+    logging.debug("Experiment result dictionary: %s", flat_result)
+    return flat_result
+
+# --- New statistics function ---
+def calculate_experiment_statistics(flat_result):
+    """
+    Calculate experiment-level statistics for summary and CSV export.
+    Returns a dict of statistics.
+    """
+    import numpy as np
+
+    points = flat_result["points"]
+    center_x = flat_result["center_x"]
+    center_y = flat_result["center_y"]
+
+    # Prepare lists
+    euclid_errors = []
+    angular_devs = []
+    cd_xs = []
+    cd_ys = []
+
+    for idx, pdata in points.items():
+        tx, ty = pdata["target_x"], pdata["target_y"]
+        gx, gy = pdata["guess_x"], pdata["guess_y"]
+        tcdx, tcdy = pdata["target_cd_x"], pdata["target_cd_y"]
+        gcdx, gcdy = pdata["guess_cd_x"], pdata["guess_cd_y"]
+        eucl = pdata["guess_eucldist"]
+
+        # Only if guess exists
+        if gx is not None and gy is not None:
+            # Euclidean error
+            euclid_errors.append(eucl)
+
+            # Angular deviation from nearest cardinal axis (0/90/180/270)
+            angle = math.degrees(math.atan2(gy - center_y, gx - center_x)) % 360
+            cardinal_angles = [0, 90, 180, 270]
+            min_dev = min([abs((angle - ca + 180) % 360 - 180) for ca in cardinal_angles])
+            angular_devs.append(min_dev)
+
+            # Center distances
+            cd_xs.append(gcdx)
+            cd_ys.append(gcdy)
+
+    # Aggregate statistics
+    stats = {
+        "avg_euclid_error": float(np.mean(euclid_errors)) if euclid_errors else None,
+        "avg_angular_deviation_cardinal": float(np.mean(angular_devs)) if angular_devs else None,
+        "avg_cd_x": float(np.mean(cd_xs)) if cd_xs else None,
+        "avg_cd_y": float(np.mean(cd_ys)) if cd_ys else None,
+    }
+    return stats
+
+def merge_to_csv(exp_data, csv_path):
+    """
+    Merge experiment data into a CSV file. If file does not exist, create header.
+    Columns are named as: {point}{type}_{field}, e.g. 1t_pos_x, 2g_cd_x, 3m_euclidistance.
+    Also includes experiment-level statistics.
+    """
+    import csv
+
+    # Prepare row with global experiment info
+    row = {
+        "participant": exp_data["participant"],
+        "test_type": exp_data["test_type"],
+        "n_test": exp_data["n_test"],
+        "base_image_path": exp_data["base_image_path"],
+        "center_x": exp_data["center_x"],
+        "center_y": exp_data["center_y"],
+    }
+
+    # Prepare per-point fields with new naming convention
+    point_fields = []
+    n_points = len(exp_data["points"])
+    for idx in range(1, n_points + 1):
+        meta = exp_data["metadata"][idx]
+        point = exp_data["points"][str(idx)]
+        fields = {
+            f"{idx}t_pos_x": point["target_x"],
+            f"{idx}t_pos_y": point["target_y"],
+            f"{idx}t_angle_deg": point["target_degrees"],
+            f"{idx}t_cd_x": point["target_cd_x"],
+            f"{idx}t_cd_y": point["target_cd_y"],
+            f"{idx}t_icon_path": point["icon_path"],
+            f"{idx}m_distance": meta["distance"],
+            f"{idx}m_angle": meta["angle"],
+            f"{idx}m_cd_x": meta["x_c_dist"],
+            f"{idx}m_cd_y": meta["y_c_dist"],
+            f"{idx}g_pos_x": point["guess_x"],
+            f"{idx}g_pos_y": point["guess_y"],
+            f"{idx}g_angle_deg": point["guess_degrees"],
+            f"{idx}g_cd_x": point["guess_cd_x"],
+            f"{idx}g_cd_y": point["guess_cd_y"],
+            f"{idx}g_euclidistance": point["guess_eucldist"],
+        }
+        point_fields.append(fields)
+
+    # Flatten all fields into the row, keeping each point's fields together
+    for fields in point_fields:
+        row.update(fields)
+
+    # Add statistics (flattened)
+    stats = exp_data.get("statistics", {})
+    # Flatten nested dicts (e.g. accuracy_by_angular_bucket) for CSV columns
+    flat_stats = {}
+    for k, v in stats.items():
+        if isinstance(v, dict):
+            for subk, subv in v.items():
+                flat_stats[f"stat_{k}_{subk}"] = subv
+        elif isinstance(v, list):
+            # For lists, store as stringified list (e.g. for guess_accuracy_vs_target_distance)
+            flat_stats[f"stat_{k}"] = str(v)
+        else:
+            flat_stats[f"stat_{k}"] = v
+    row.update(flat_stats)
+
+    # Extend header with stat keys (if not present)
+    stat_keys = list(flat_stats.keys())
+    header = [
+        "participant", "test_type", "n_test", "base_image_path", "center_x", "center_y"
+    ]
+    for idx in range(1, n_points + 1):
+        header.extend([
+            f"{idx}t_pos_x",
+            f"{idx}t_pos_y",
+            f"{idx}t_angle_deg",
+            f"{idx}t_cd_x",
+            f"{idx}t_cd_y",
+            f"{idx}t_icon_path",
+            f"{idx}m_distance",
+            f"{idx}m_angle",
+            f"{idx}m_cd_x",
+            f"{idx}m_cd_y",
+            f"{idx}g_pos_x",
+            f"{idx}g_pos_y",
+            f"{idx}g_angle_deg",
+            f"{idx}g_cd_x",
+            f"{idx}g_cd_y",
+            f"{idx}g_euclidistance",
+        ])
+    header.extend(stat_keys)
+
+    # Write to CSV
+    file_exists = os.path.exists(csv_path)
+    with open(csv_path, "a", newline="") as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=header)
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow(row)
+    logging.info(f"Results saved to CSV: {csv_path}")
+
+# --- CLI/Module entry point ---
+def main():
+    # --- Experiment configuration (defaults) ---
+    participant_name = "P01"         # Participant name/number
+    test_type = "occluded_circle"    # Test type (folder in /res/base/)
+    n_test = 1                       # Test number
+    debug = True                     # Enable debug overlay
+    rebuild_svg = False              # Rebuild PNGs from SVGs
+    log_file_level = logging.DEBUG   # Log file level
+    log_console_level = logging.INFO # Log console level
+    results_path = os.path.join(os.path.dirname(__file__), "results.csv")  # Path to results CSV file
+    icon_display_time_sec_tuple = (25, 15, 25)  # Phase times in seconds (icons, question, guess)
+
+    # --- Run experiment session ---
+    exp_data = run_experiment(
+        participant_name=participant_name,
+        test_type=test_type,
+        n_test=n_test,
+        debug=debug,
+        rebuild_svg=rebuild_svg,
+        log_file_level=log_file_level,
+        log_console_level=log_console_level,
+        icon_display_time_sec_tuple=icon_display_time_sec_tuple,
+        results_path=results_path
+    )
+
+    # --- Save results to CSV ---
+    merge_to_csv(exp_data, results_path)
 
 if __name__ == "__main__":
-    # Set png_res for icon quality, and rebuild_svg to force conversion if needed
-    png_res = 128
-    # Set debug=True to enable debug visualization after experiment
-    # Set log levels as needed
-    main(rebuild_svg=False, png_res=png_res, debug=True,
-         log_file_level=logging.DEBUG, log_console_level=logging.INFO)
+    main()
