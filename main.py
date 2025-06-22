@@ -6,6 +6,34 @@ import math
 import json
 import time
 import pygame
+import ctypes
+import io
+from PIL import Image
+import cairosvg
+from scipy.optimize import linear_sum_assignment
+import logging
+
+# --- Logging setup ---
+def setup_logging(log_path, file_level=logging.DEBUG, console_level=logging.INFO):
+    # Clear the log file on every run
+    open(log_path, "w").close()
+    logger = logging.getLogger()
+    logger.setLevel(logging.DEBUG)
+    # File handler (all logs)
+    fh = logging.FileHandler(log_path)
+    fh.setLevel(file_level)
+    fh_formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+    fh.setFormatter(fh_formatter)
+    # Console handler (above info)
+    ch = logging.StreamHandler()
+    ch.setLevel(console_level)
+    ch_formatter = logging.Formatter('[%(levelname)s] %(message)s')
+    ch.setFormatter(ch_formatter)
+    # Remove existing handlers
+    logger.handlers = []
+    logger.addHandler(fh)
+    logger.addHandler(ch)
+    logging.debug("Logging initialized: file=%s, file_level=%s, console_level=%s", log_path, file_level, console_level)
 
 def scatter_icons_around_center(center_x, center_y, distances, n_items=5):
     """
@@ -42,11 +70,8 @@ def ensure_svg_icons_converted_to_png(rebuild_svg=False, png_res=128):
     If rebuild_svg is True, always rebuild PNGs. Otherwise, skip if PNG exists.
     png_res: output PNG size (width and height in px).
     """
-    import io
-    from PIL import Image
-    try:
-        import cairosvg
-    except ImportError:
+    if cairosvg is None:
+        logging.error("cairosvg is required for SVG to PNG conversion. Please install it.")
         print("cairosvg is required for SVG to PNG conversion. Please install it.")
         sys.exit(1)
 
@@ -57,32 +82,63 @@ def ensure_svg_icons_converted_to_png(rebuild_svg=False, png_res=128):
             png_name = os.path.splitext(fname)[0] + ".png"
             png_path = os.path.join(icons_dir, png_name)
             if rebuild_svg or not os.path.exists(png_path):
-                print(f"Converting {fname} to {png_name}...")
+                logging.info(f"Converting {fname} to {png_name}...")
                 png_bytes = cairosvg.svg2png(url=svg_path, output_width=png_res, output_height=png_res)
                 pil_img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
                 pil_img.save(png_path)
             # else: print(f"PNG for {fname} already exists, skipping.")
 
+def optimal_icon_guess_assignment(icon_points, guesses):
+    """
+    Assigns each guess to an icon (one-to-one, minimal total distance) using Hungarian algorithm.
+    Returns a list of guess indices for each icon (None if not enough guesses).
+    """
+    if not guesses or not icon_points:
+        return [None] * len(icon_points)
+    if linear_sum_assignment is None:
+        # Fallback: greedy assignment (not optimal)
+        icon_to_guess = [None] * len(icon_points)
+        guess_used = set()
+        for i, (ix, iy, _) in enumerate(icon_points):
+            min_dist = float('inf')
+            min_j = None
+            for j, (gx, gy) in enumerate(guesses):
+                if j in guess_used:
+                    continue
+                dist = math.hypot(ix - gx, iy - gy)
+                if dist < min_dist:
+                    min_dist = dist
+                    min_j = j
+            if min_j is not None:
+                icon_to_guess[i] = min_j
+                guess_used.add(min_j)
+        return icon_to_guess
+    # Build cost matrix
+    cost_matrix = []
+    for (ix, iy, _) in icon_points:
+        row = []
+        for (gx, gy) in guesses:
+            row.append(math.hypot(ix - gx, iy - gy))
+        cost_matrix.append(row)
+    # Pad cost matrix if needed
+    n = max(len(icon_points), len(guesses))
+    for row in cost_matrix:
+        row.extend([1e6] * (n - len(row)))
+    while len(cost_matrix) < n:
+        cost_matrix.append([1e6] * n)
+    row_ind, col_ind = linear_sum_assignment(cost_matrix)
+    icon_to_guess = [None] * len(icon_points)
+    for i, j in zip(row_ind, col_ind):
+        if i < len(icon_points) and j < len(guesses) and cost_matrix[i][j] < 1e5:
+            icon_to_guess[i] = j
+    return icon_to_guess
+
 def save_results(icon_coords, guesses, results_path, participant_name, test_type, n_test):
-    # Match guesses to icons (nearest, one-to-one)
+    # Match guesses to icons (optimal, one-to-one)
     icon_points = [(x, y, angle) for (x, y, angle, dist) in icon_coords]
     icon_attrs = [{"distance": dist, "angle": angle} for (x, y, angle, dist) in icon_coords]
     guesses_local = guesses[:]
-    icon_to_guess = [None] * len(icon_points)
-    guess_used = set()
-    for i, (ix, iy, _) in enumerate(icon_points):
-        min_dist = float('inf')
-        min_j = None
-        for j, (gx, gy) in enumerate(guesses_local):
-            if j in guess_used:
-                continue
-            dist = math.hypot(ix - gx, iy - gy)
-            if dist < min_dist:
-                min_dist = dist
-                min_j = j
-        if min_j is not None:
-            icon_to_guess[i] = min_j
-            guess_used.add(min_j)
+    icon_to_guess = optimal_icon_guess_assignment(icon_points, guesses_local)
     exp_result = {}
     for idx, (icon, attrs) in enumerate(zip(icon_points, icon_attrs)):
         icon_x, icon_y, icon_angle = icon
@@ -109,7 +165,8 @@ def save_results(icon_coords, guesses, results_path, participant_name, test_type
     try:
         with open(results_path, "r") as f:
             data = json.load(f)
-    except Exception:
+    except Exception as e:
+        logging.warning(f"Could not read results file: {e}")
         data = {}
     if participant_name not in data:
         data[participant_name] = {}
@@ -119,36 +176,13 @@ def save_results(icon_coords, guesses, results_path, participant_name, test_type
     data[participant_name][test_type][exp_key] = exp_result
     with open(results_path, "w") as f:
         json.dump(data, f, indent=2)
+    logging.info(f"Results saved for participant={participant_name}, test_type={test_type}, n_test={n_test}")
 
-def visualize_debug(results_path, participant_name, test_type, n_test, image_path, image_height_px, icon_size_px, screen, screen_width, screen_height):
+def draw_debug_overlay(exp_result, screen, icon_size_px, font):
     """
-    Visualize the icons, guesses, and distances for the given experiment.
+    Draw debug overlay: icons, guesses, lines, and distances.
     """
-    # Load results
-    try:
-        with open(results_path, "r") as f:
-            data = json.load(f)
-    except Exception as e:
-        print(f"Could not load results: {e}")
-        return
-
-    exp_key = f"exp_{n_test}"
-    try:
-        exp_result = data[participant_name][test_type][exp_key]
-    except Exception as e:
-        print(f"Could not find experiment result: {e}")
-        return
-
-    # Load base image
-    img = pygame.image.load(image_path).convert_alpha()
-    img = pygame.transform.smoothscale(img, (image_height_px, image_height_px))
-    center_x, center_y = screen_width // 2, screen_height // 2
-    img_rect = img.get_rect(center=(center_x, center_y))
-
-    # Prepare font
-    font = pygame.font.SysFont(None, 28)
-
-    # Gather icon and guess data
+    import pygame  # Delayed import
     icons = []
     guesses = []
     lines = []
@@ -163,74 +197,50 @@ def visualize_debug(results_path, participant_name, test_type, n_test, image_pat
             guesses.append(None)
             lines.append(((icon_x, icon_y), None, None))
 
-    # Draw everything
-    running = True
-    while running:
-        screen.fill((0, 0, 0))
-        screen.blit(img, img_rect)
+    # Draw icons (blue)
+    for (ix, iy) in icons:
+        pygame.draw.circle(screen, (0, 128, 255), (ix, iy), icon_size_px // 2)
+    # Draw guesses (red)
+    for g in guesses:
+        if g:
+            pygame.draw.circle(screen, (255, 0, 0), g, 8)
+    # Draw lines and distances
+    for (icon_pos, guess_pos, dist) in lines:
+        if guess_pos:
+            pygame.draw.line(screen, (128, 0, 128), icon_pos, guess_pos, 2)
+            mid_x = (icon_pos[0] + guess_pos[0]) // 2
+            mid_y = (icon_pos[1] + guess_pos[1]) // 2
+            label = f"{dist:.1f}" if dist is not None else "?"
+            text_surf = font.render(label, True, (180, 0, 180))
+            screen.blit(text_surf, (mid_x, mid_y))
 
-        # Draw icons (blue)
-        for (ix, iy) in icons:
-            pygame.draw.circle(screen, (0, 128, 255), (ix, iy), icon_size_px // 2)
-        # Draw guesses (red)
-        for g in guesses:
-            if g:
-                pygame.draw.circle(screen, (255, 0, 0), g, 8)
-        # Draw lines and distances
-        for (icon_pos, guess_pos, dist) in lines:
-            if guess_pos:
-                # Draw line in purple
-                pygame.draw.line(screen, (128, 0, 128), icon_pos, guess_pos, 2)
-                # Label with distance in purple
-                mid_x = (icon_pos[0] + guess_pos[0]) // 2
-                mid_y = (icon_pos[1] + guess_pos[1]) // 2
-                label = f"{dist:.1f}" if dist is not None else "?"
-                text_surf = font.render(label, True, (180, 0, 180))
-                screen.blit(text_surf, (mid_x, mid_y))
-        # Instructions
-        instr = "Debug visualization: Press Enter or Esc to exit"
-        isurf = font.render(instr, True, (200, 200, 200))
-        screen.blit(isurf, (screen_width // 2 - isurf.get_width() // 2, screen_height - 40))
-
-        pygame.display.flip()
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                # Ignore window close to prevent accidental exit
-                pass
-            elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_RETURN or event.key == pygame.K_ESCAPE:
-                    running = False
-        pygame.time.wait(10)
-
-def main(rebuild_svg=False, png_res=128, debug=False):
+def main(rebuild_svg=False, png_res=128, debug=False, log_file_level=logging.DEBUG, log_console_level=logging.INFO):
+    # --- Logging ---
+    log_path = os.path.join(os.path.dirname(__file__), "experiment.log")
+    setup_logging(log_path, file_level=log_file_level, console_level=log_console_level)
+    logging.info("Experiment started")
     ensure_svg_icons_converted_to_png(rebuild_svg=rebuild_svg, png_res=png_res)
     pygame.init()
     info = pygame.display.Info()
     screen_width, screen_height = info.current_w, info.current_h
     screen = pygame.display.set_mode((screen_width, screen_height), pygame.FULLSCREEN)
     pygame.display.set_caption("Experiment")
+    logging.info(f"Screen size: {screen_width}x{screen_height}")
 
     # --- Parameters ---
     image_path = "05_round_cross.png"
 
     # --- Calculate image height in pixels for 30 cm ---
-    # Try to get DPI from pygame, otherwise use a common default (96)
+    # Try to get DPI from system, otherwise use a common default (96)
     try:
-        # On many systems, pygame.display.Info() does not provide DPI.
-        # Try SDL2 API via pygame 2.x, else fallback.
-        import ctypes
-        user32 = ctypes.windll.user32 if hasattr(ctypes, 'windll') and hasattr(ctypes.windll, 'user32') else None
-        if user32:
+        # Windows: use ctypes to get system DPI
+        if sys.platform.startswith("win"):
+            user32 = ctypes.windll.user32
             user32.SetProcessDPIAware()
             dpi = user32.GetDpiForSystem()
         else:
-            # Fallback for Linux/macOS: try to estimate DPI
-            # 1 inch = 2.54 cm
-            # Use screen physical size if available
-            if hasattr(info, 'current_w') and hasattr(info, 'current_h') and hasattr(info, 'wm'):
-                dpi = 96  # fallback
-            else:
-                dpi = 96  # fallback
+            # Fallback for non-Windows systems
+            dpi = 96
     except Exception:
         dpi = 96  # fallback
 
@@ -250,6 +260,7 @@ def main(rebuild_svg=False, png_res=128, debug=False):
     # --- Load resources ---
     img = display_image_fullscreen(image_path, image_height_px)
     icon_surfaces = load_icon_surfaces(icon_size_px)
+    logging.info(f"Loaded {len(icon_surfaces)} icon surfaces")
 
     # --- State ---
     phase = "icons"
@@ -268,6 +279,7 @@ def main(rebuild_svg=False, png_res=128, debug=False):
     center_x, center_y = screen_width // 2, screen_height // 2
     icon_coords = scatter_icons_around_center(center_x, center_y, distances, n_icons)
     icon_assignments = [random.choice(icon_surfaces) for _ in range(n_icons)]
+    logging.debug(f"Icon coordinates: {icon_coords}")
 
     # --- Timers ---
     icon_phase_start = time.time()
@@ -276,33 +288,70 @@ def main(rebuild_svg=False, png_res=128, debug=False):
     def save_results_local():
         save_results(icon_coords, guesses, results_path, participant_name, test_type, n_test)
 
+    def get_exp_result_for_debug():
+        # Helper to get the current exp_result dict for debug overlay
+        icon_points = [(x, y, angle) for (x, y, angle, dist) in icon_coords]
+        icon_attrs = [{"distance": dist, "angle": angle} for (x, y, angle, dist) in icon_coords]
+        guesses_local = guesses[:]
+        icon_to_guess = optimal_icon_guess_assignment(icon_points, guesses_local)
+        exp_result = {}
+        for idx, (icon, attrs) in enumerate(zip(icon_points, icon_attrs)):
+            icon_x, icon_y, icon_angle = icon
+            icon_label = f"icon_{idx+1}"
+            guess_idx = icon_to_guess[idx] if idx < len(icon_to_guess) else None
+            if guess_idx is not None and guess_idx < len(guesses_local):
+                guess_x, guess_y = guesses_local[guess_idx]
+                dist_x = guess_x - icon_x
+                dist_y = guess_y - icon_y
+                euclidian = math.hypot(dist_x, dist_y)
+                icon_guess = (guess_x, guess_y)
+                dist_to_icon = (dist_x, dist_y, euclidian)
+            else:
+                icon_guess = None
+                dist_to_icon = (None, None, None)
+                euclidian = None
+            exp_result[icon_label] = {
+                "icon_pos": (icon_x, icon_y, icon_angle),
+                "icon_guess": icon_guess,
+                "dist_to_icon": dist_to_icon,
+                "euclidian_dist": euclidian,
+                "metadata": attrs
+            }
+        return exp_result
+
     # --- Main loop ---
     while running:
         screen.fill((0, 0, 0))
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
+                logging.info("Received QUIT event")
                 running = False
             elif event.type == pygame.KEYDOWN:
                 if phase == "icons":
                     if event.key == pygame.K_RETURN:
+                        logging.info("Phase changed: icons -> question")
                         phase = "question"
                         input_text = ""
                     elif event.key == pygame.K_ESCAPE:
                         esc_counter += 1
                         if esc_counter >= 3:
+                            logging.info("Escape pressed 3 times, exiting")
                             running = False
                     else:
                         esc_counter = 0
                 elif phase == "question":
                     if event.key == pygame.K_RETURN:
                         question_answer = input_text
+                        logging.info(f"Question answered: {question_answer}")
                         input_text = ""
                         phase = "guess"
+                        logging.info("Phase changed: question -> guess")
                     elif event.key == pygame.K_BACKSPACE:
                         input_text = input_text[:-1]
                     elif event.key == pygame.K_ESCAPE:
                         esc_counter += 1
                         if esc_counter >= 3:
+                            logging.info("Escape pressed 3 times, exiting")
                             running = False
                     else:
                         esc_counter = 0
@@ -311,17 +360,12 @@ def main(rebuild_svg=False, png_res=128, debug=False):
                 elif phase == "guess":
                     if event.key == pygame.K_RETURN:
                         save_results_local()
+                        logging.info("Experiment finished, exiting")
                         running = False
-                        # --- Debug visualization ---
-                        if debug:
-                            visualize_debug(
-                                results_path, participant_name, test_type, n_test,
-                                image_path, image_height_px, icon_size_px,
-                                screen, screen_width, screen_height
-                            )
                     elif event.key == pygame.K_ESCAPE:
                         esc_counter += 1
                         if esc_counter >= 3:
+                            logging.info("Escape pressed 3 times, exiting")
                             running = False
                     else:
                         esc_counter = 0
@@ -331,12 +375,14 @@ def main(rebuild_svg=False, png_res=128, debug=False):
                     if len(guesses) < n_icons:
                         guesses.append((mx, my))
                         save_results_local()
+                        logging.info(f"Guess added at ({mx}, {my})")
                 elif event.button == 3:  # Right click to remove nearest
                     if guesses:
                         dists = [math.hypot(mx - gx, my - gy) for gx, gy in guesses]
                         idx = dists.index(min(dists))
-                        guesses.pop(idx)
+                        removed = guesses.pop(idx)
                         save_results_local()
+                        logging.info(f"Guess removed at {removed}")
 
         # --- Phase logic ---
         if phase == "icons":
@@ -351,6 +397,7 @@ def main(rebuild_svg=False, png_res=128, debug=False):
             if time.time() >= icon_phase_end:
                 phase = "question"
                 input_text = ""
+                logging.info("Icon phase timed out, moving to question phase")
         elif phase == "question":
             # Draw question text
             qsurf = font.render(question, True, (255, 255, 255))
@@ -362,9 +409,14 @@ def main(rebuild_svg=False, png_res=128, debug=False):
             # Draw main image
             img_rect = img.get_rect(center=(center_x, center_y))
             screen.blit(img, img_rect)
-            # Draw guesses as red dots
-            for gx, gy in guesses:
-                pygame.draw.circle(screen, (255, 0, 0), (gx, gy), 7)
+            # Draw guesses as red dots (if not debug)
+            if not debug:
+                for gx, gy in guesses:
+                    pygame.draw.circle(screen, (255, 0, 0), (gx, gy), 7)
+            # Draw debug overlay if debug is True
+            if debug:
+                exp_result = get_exp_result_for_debug()
+                draw_debug_overlay(exp_result, screen, icon_size_px, font)
             # Draw instructions
             instr = "Left click: add guess, Right click: remove nearest, Enter: finish"
             isurf = font.render(instr, True, (200, 200, 200))
@@ -374,10 +426,13 @@ def main(rebuild_svg=False, png_res=128, debug=False):
         pygame.time.wait(10)
 
     pygame.quit()
+    logging.info("Pygame quit, program exiting")
     sys.exit()
 
 if __name__ == "__main__":
     # Set png_res for icon quality, and rebuild_svg to force conversion if needed
     png_res = 128
     # Set debug=True to enable debug visualization after experiment
-    main(rebuild_svg=False, png_res=png_res, debug=True)
+    # Set log levels as needed
+    main(rebuild_svg=False, png_res=png_res, debug=True,
+         log_file_level=logging.DEBUG, log_console_level=logging.INFO)
