@@ -133,10 +133,14 @@ def optimal_icon_guess_assignment(icon_points, guesses):
             icon_to_guess[i] = j
     return icon_to_guess
 
-def save_results(icon_coords, guesses, results_path, participant_name, test_type, n_test):
+def save_results(icon_coords, guesses, results_path, participant_name, test_type, n_test, center_x=None, center_y=None):
     # Match guesses to icons (optimal, one-to-one)
     icon_points = [(x, y, angle) for (x, y, angle, dist) in icon_coords]
-    icon_attrs = [{"distance": dist, "angle": angle} for (x, y, angle, dist) in icon_coords]
+    icon_attrs = []
+    for (x, y, angle, dist) in icon_coords:
+        x_c_dist = x - center_x if center_x is not None else None
+        y_c_dist = y - center_y if center_y is not None else None
+        icon_attrs.append({"distance": dist, "angle": angle, "x_c_dist": x_c_dist, "y_c_dist": y_c_dist})
     guesses_local = guesses[:]
     icon_to_guess = optimal_icon_guess_assignment(icon_points, guesses_local)
     exp_result = {}
@@ -151,16 +155,22 @@ def save_results(icon_coords, guesses, results_path, participant_name, test_type
             euclidian = math.hypot(dist_x, dist_y)
             icon_guess = (guess_x, guess_y)
             dist_to_icon = (dist_x, dist_y, euclidian)
+            guess_x_c_dist = guess_x - center_x if center_x is not None else None
+            guess_y_c_dist = guess_y - center_y if center_y is not None else None
         else:
             icon_guess = None
             dist_to_icon = (None, None, None)
             euclidian = None
+            guess_x_c_dist = None
+            guess_y_c_dist = None
         exp_result[icon_label] = {
             "icon_pos": (icon_x, icon_y, icon_angle),
             "icon_guess": icon_guess,
             "dist_to_icon": dist_to_icon,
             "euclidian_dist": euclidian,
-            "metadata": attrs
+            "metadata": attrs,
+            "guess_x_c_dist": guess_x_c_dist,
+            "guess_y_c_dist": guess_y_c_dist
         }
     try:
         with open(results_path, "r") as f:
@@ -178,14 +188,17 @@ def save_results(icon_coords, guesses, results_path, participant_name, test_type
         json.dump(data, f, indent=2)
     logging.info(f"Results saved for participant={participant_name}, test_type={test_type}, n_test={n_test}")
 
-def draw_debug_overlay(exp_result, screen, icon_size_px, font):
+def draw_debug_overlay(exp_result, screen, icon_size_px, font, center_x, center_y):
     """
-    Draw debug overlay: icons, guesses, lines, and distances.
+    Draw debug overlay: icons, guesses, lines, and distances, including cardinals.
     """
     import pygame  # Delayed import
     icons = []
     guesses = []
     lines = []
+    # Draw cardinal lines
+    pygame.draw.line(screen, (100, 255, 100), (center_x, 0), (center_x, screen.get_height()), 2)
+    pygame.draw.line(screen, (100, 255, 100), (0, center_y), (screen.get_width(), center_y), 2)
     for k, v in exp_result.items():
         icon_x, icon_y, _ = v["icon_pos"]
         icons.append((icon_x, icon_y))
@@ -196,6 +209,42 @@ def draw_debug_overlay(exp_result, screen, icon_size_px, font):
         else:
             guesses.append(None)
             lines.append(((icon_x, icon_y), None, None))
+
+        # Draw icon to cardinals
+        x_c_dist = v["metadata"].get("x_c_dist")
+        y_c_dist = v["metadata"].get("y_c_dist")
+        if x_c_dist is not None:
+            # Vertical distance (horizontal line)
+            pygame.draw.line(screen, (0, 200, 255), (icon_x, icon_y), (center_x, icon_y), 1)
+            label = f"x_c:{x_c_dist:+}"
+            text_surf = font.render(label, True, (0, 200, 255))
+            mid_x = (icon_x + center_x) // 2
+            screen.blit(text_surf, (mid_x, icon_y - 20))
+        if y_c_dist is not None:
+            # Horizontal distance (vertical line)
+            pygame.draw.line(screen, (255, 200, 0), (icon_x, icon_y), (icon_x, center_y), 1)
+            label = f"y_c:{y_c_dist:+}"
+            text_surf = font.render(label, True, (255, 200, 0))
+            mid_y = (icon_y + center_y) // 2
+            screen.blit(text_surf, (icon_x + 10, mid_y))
+
+        # Draw guess to cardinals if guess exists
+        if v["icon_guess"]:
+            guess_x, guess_y = v["icon_guess"]
+            guess_x_c_dist = v.get("guess_x_c_dist")
+            guess_y_c_dist = v.get("guess_y_c_dist")
+            if guess_x_c_dist is not None:
+                pygame.draw.line(screen, (0, 255, 180), (guess_x, guess_y), (center_x, guess_y), 1)
+                label = f"x_c:{guess_x_c_dist:+}"
+                text_surf = font.render(label, True, (0, 255, 180))
+                mid_x = (guess_x + center_x) // 2
+                screen.blit(text_surf, (mid_x, guess_y + 10))
+            if guess_y_c_dist is not None:
+                pygame.draw.line(screen, (255, 100, 100), (guess_x, guess_y), (guess_x, center_y), 1)
+                label = f"y_c:{guess_y_c_dist:+}"
+                text_surf = font.render(label, True, (255, 100, 100))
+                mid_y = (guess_y + center_y) // 2
+                screen.blit(text_surf, (guess_x + 10, mid_y))
 
     # Draw icons (blue)
     for (ix, iy) in icons:
@@ -286,12 +335,16 @@ def main(rebuild_svg=False, png_res=128, debug=False, log_file_level=logging.DEB
     icon_phase_end = icon_phase_start + icon_display_time_sec
 
     def save_results_local():
-        save_results(icon_coords, guesses, results_path, participant_name, test_type, n_test)
+        save_results(icon_coords, guesses, results_path, participant_name, test_type, n_test, center_x=center_x, center_y=center_y)
 
     def get_exp_result_for_debug():
         # Helper to get the current exp_result dict for debug overlay
         icon_points = [(x, y, angle) for (x, y, angle, dist) in icon_coords]
-        icon_attrs = [{"distance": dist, "angle": angle} for (x, y, angle, dist) in icon_coords]
+        icon_attrs = []
+        for (x, y, angle, dist) in icon_coords:
+            x_c_dist = x - center_x
+            y_c_dist = y - center_y
+            icon_attrs.append({"distance": dist, "angle": angle, "x_c_dist": x_c_dist, "y_c_dist": y_c_dist})
         guesses_local = guesses[:]
         icon_to_guess = optimal_icon_guess_assignment(icon_points, guesses_local)
         exp_result = {}
@@ -306,16 +359,22 @@ def main(rebuild_svg=False, png_res=128, debug=False, log_file_level=logging.DEB
                 euclidian = math.hypot(dist_x, dist_y)
                 icon_guess = (guess_x, guess_y)
                 dist_to_icon = (dist_x, dist_y, euclidian)
+                guess_x_c_dist = guess_x - center_x
+                guess_y_c_dist = guess_y - center_y
             else:
                 icon_guess = None
                 dist_to_icon = (None, None, None)
                 euclidian = None
+                guess_x_c_dist = None
+                guess_y_c_dist = None
             exp_result[icon_label] = {
                 "icon_pos": (icon_x, icon_y, icon_angle),
                 "icon_guess": icon_guess,
                 "dist_to_icon": dist_to_icon,
                 "euclidian_dist": euclidian,
-                "metadata": attrs
+                "metadata": attrs,
+                "guess_x_c_dist": guess_x_c_dist,
+                "guess_y_c_dist": guess_y_c_dist
             }
         return exp_result
 
@@ -416,7 +475,7 @@ def main(rebuild_svg=False, png_res=128, debug=False, log_file_level=logging.DEB
             # Draw debug overlay if debug is True
             if debug:
                 exp_result = get_exp_result_for_debug()
-                draw_debug_overlay(exp_result, screen, icon_size_px, font)
+                draw_debug_overlay(exp_result, screen, icon_size_px, font, center_x, center_y)
             # Draw instructions
             instr = "Left click: add guess, Right click: remove nearest, Enter: finish"
             isurf = font.render(instr, True, (200, 200, 200))
