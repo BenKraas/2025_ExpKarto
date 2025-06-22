@@ -517,10 +517,15 @@ def run_experiment(
                         esc_counter = 0
             elif event.type == pygame.MOUSEBUTTONDOWN and phase == "guess":
                 mx, my = event.pos
+                # --- Only allow guesses within the image bounds ---
+                img_rect = img.get_rect(center=(center_x, center_y))
                 if event.button == 1:  # Left click to add
                     if len(guesses) < n_icons:
-                        guesses.append((mx, my))
-                        logging.info(f"| Guess added at ({mx}, {my})")
+                        if img_rect.collidepoint(mx, my):
+                            guesses.append((mx, my))
+                            logging.info(f"| Guess added at ({mx}, {my})")
+                        else:
+                            logging.info(f"| Guess at ({mx}, {my}) ignored (out of image bounds)")
                 elif event.button == 3:  # Right click to remove nearest
                     if guesses:
                         dists = [math.hypot(mx - gx, my - gy) for gx, gy in guesses]
@@ -717,8 +722,8 @@ def calculate_experiment_statistics(flat_result):
     stats = {
         "avg_euclid_error": float(np.mean(euclid_errors)) if euclid_errors else None,
         "avg_angular_deviation_cardinal": float(np.mean(angular_devs)) if angular_devs else None,
-        "avg_cd_x": float(np.mean(cd_xs)) if cd_xs else None,
-        "avg_cd_y": float(np.mean(cd_ys)) if cd_ys else None,
+        "avg_cd_x": float(np.mean(np.abs(cd_xs))) if cd_xs else None,
+        "avg_cd_y": float(np.mean(np.abs(cd_ys))) if cd_ys else None,
     }
     return stats
 
@@ -908,11 +913,14 @@ def get_participant_info(screen=None, screen_width=None, screen_height=None):
                         esc_counter = 0
         pygame.time.wait(10)
 
+    # --- convert to lower cases ---
+    fields = [(label, value.lower().strip()) for label, value in fields]
+
     # --- Check inputs ---
     if not fields[0][1].isdigit() or int(fields[0][1]) < 0:
         logging.info("| Invalid age input detected")
         raise ValueError("Invalid age input. Please enter a valid number.")
-    if fields[1][1].strip() not in ["M", "F", "D", "O"]:
+    if fields[1][1].strip() not in ["m", "f", "d", "o"]:
         logging.info("| Invalid gender input detected")
         raise ValueError("Invalid gender input. Please enter 'M' - Male, 'F' - Female, 'D' - Diverse, or 'O' - Other.")
     if not fields[2][1].strip():
