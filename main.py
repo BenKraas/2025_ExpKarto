@@ -15,6 +15,10 @@ import cairosvg
 from scipy.optimize import linear_sum_assignment
 import logging
 import threading
+import ctypes
+import sys
+import pygame
+import numpy as np
 
 # --- Logging setup ---
 def setup_logging(log_path, file_level=logging.DEBUG, console_level=logging.INFO):
@@ -148,7 +152,6 @@ def draw_debug_overlay(exp_result, screen, icon_size_px, font, center_x, center_
     """
     Draw debug overlay: icons, guesses, lines, and distances, including cardinals.
     """
-    import pygame  # Delayed import
     icons = []
     guesses = []
     lines = []
@@ -330,8 +333,6 @@ def run_experiment(
 
     # --- Calculate image height in pixels for image_size_cm ---
     try:
-        import ctypes
-        import sys
         if sys.platform.startswith("win"):
             user32 = ctypes.windll.user32
             gdi32 = ctypes.windll.gdi32
@@ -684,8 +685,6 @@ def calculate_experiment_statistics(flat_result):
     Calculate experiment-level statistics for summary and CSV export.
     Returns a dict of statistics.
     """
-    import numpy as np
-
     points = flat_result["points"]
     center_x = flat_result["center_x"]
     center_y = flat_result["center_y"]
@@ -841,7 +840,6 @@ def get_participant_info(screen=None, screen_width=None, screen_height=None):
     Interactive pygame window to collect participant info: age, gender, codeword.
     Returns a dict: {"age": ..., "gender": ..., "codeword": ...}
     """
-    import pygame
     logging.info("| Starting participant info acquisition")
     # Only init and set display if not provided
     if screen is None or screen_width is None or screen_height is None:
@@ -941,7 +939,6 @@ def main():
     logging.info("=== SESSION START ===")
 
     # --- Initialize pygame and display ONCE ---
-    import pygame
     pygame.init()
     info = pygame.display.Info()
     screen_width, screen_height = info.current_w, info.current_h
