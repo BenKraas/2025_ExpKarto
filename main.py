@@ -179,22 +179,27 @@ def visualize_debug(results_path, participant_name, test_type, n_test, image_pat
         # Draw lines and distances
         for (icon_pos, guess_pos, dist) in lines:
             if guess_pos:
-                pygame.draw.line(screen, (0, 255, 0), icon_pos, guess_pos, 2)
-                # Label with distance
+                # Draw line in purple
+                pygame.draw.line(screen, (128, 0, 128), icon_pos, guess_pos, 2)
+                # Label with distance in purple
                 mid_x = (icon_pos[0] + guess_pos[0]) // 2
                 mid_y = (icon_pos[1] + guess_pos[1]) // 2
                 label = f"{dist:.1f}" if dist is not None else "?"
-                text_surf = font.render(label, True, (255, 255, 0))
+                text_surf = font.render(label, True, (180, 0, 180))
                 screen.blit(text_surf, (mid_x, mid_y))
         # Instructions
-        instr = "Debug visualization: Press any key or close window to exit"
+        instr = "Debug visualization: Press Enter or Esc to exit"
         isurf = font.render(instr, True, (200, 200, 200))
         screen.blit(isurf, (screen_width // 2 - isurf.get_width() // 2, screen_height - 40))
 
         pygame.display.flip()
         for event in pygame.event.get():
-            if event.type == pygame.QUIT or event.type == pygame.KEYDOWN:
-                running = False
+            if event.type == pygame.QUIT:
+                # Ignore window close to prevent accidental exit
+                pass
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_RETURN or event.key == pygame.K_ESCAPE:
+                    running = False
         pygame.time.wait(10)
 
 def main(rebuild_svg=False, png_res=128, debug=False):
@@ -207,7 +212,32 @@ def main(rebuild_svg=False, png_res=128, debug=False):
 
     # --- Parameters ---
     image_path = "05_round_cross.png"
-    image_height_px = int(screen_height * 0.7)
+
+    # --- Calculate image height in pixels for 30 cm ---
+    # Try to get DPI from pygame, otherwise use a common default (96)
+    try:
+        # On many systems, pygame.display.Info() does not provide DPI.
+        # Try SDL2 API via pygame 2.x, else fallback.
+        import ctypes
+        user32 = ctypes.windll.user32 if hasattr(ctypes, 'windll') and hasattr(ctypes.windll, 'user32') else None
+        if user32:
+            user32.SetProcessDPIAware()
+            dpi = user32.GetDpiForSystem()
+        else:
+            # Fallback for Linux/macOS: try to estimate DPI
+            # 1 inch = 2.54 cm
+            # Use screen physical size if available
+            if hasattr(info, 'current_w') and hasattr(info, 'current_h') and hasattr(info, 'wm'):
+                dpi = 96  # fallback
+            else:
+                dpi = 96  # fallback
+    except Exception:
+        dpi = 96  # fallback
+
+    cm_per_inch = 2.54
+    image_height_cm = 30
+    image_height_px = int((image_height_cm / cm_per_inch) * dpi)
+
     icon_size_px = 24
     n_icons = 5
     distances = [110, 220, 330, 440, 550]
@@ -351,36 +381,3 @@ if __name__ == "__main__":
     png_res = 128
     # Set debug=True to enable debug visualization after experiment
     main(rebuild_svg=False, png_res=png_res, debug=True)
-
-# You cannot natively load SVGs directly with pygame.
-# To use SVG icons in pygame, you must first convert them to raster images (e.g., PNG).
-# This can be done ahead of time, or at runtime using a library like cairosvg or svglib+Pillow.
-
-# Example: Convert SVG to PNG at runtime for pygame (requires cairosvg and Pillow)
-# (Uncomment and use as needed)
-
-# import io
-# from PIL import Image
-# import cairosvg
-
-# def svg_to_surface(svg_path, size_px):
-#     # Convert SVG to PNG bytes
-#     png_bytes = cairosvg.svg2png(url=svg_path, output_width=size_px, output_height=size_px)
-#     # Load PNG bytes into PIL Image
-#     pil_img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
-#     # Convert PIL Image to pygame Surface
-#     mode = pil_img.mode
-#     size = pil_img.size
-#     data = pil_img.tobytes()
-#     return pygame.image.fromstring(data, size, mode)
-
-# Then, in your icon loading:
-# def load_icon_surfaces(icon_size_px):
-#     icons_dir = os.path.join(os.path.dirname(__file__), "res", "icons")
-#     icon_files = [f for f in os.listdir(icons_dir) if f.lower().endswith('.svg')]
-#     assert icon_files, "No SVG icons found in /res/icons"
-#     surfaces = []
-#     for fname in icon_files:
-#         surf = svg_to_surface(os.path.join(icons_dir, fname), icon_size_px)
-#         surfaces.append(surf)
-#     return surfaces
