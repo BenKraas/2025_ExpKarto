@@ -1,6 +1,10 @@
+import os
+# --- Fix locale issues for pygame keyboard layout ---
+os.environ["SDL_KEYBOARD_ALLOW_SYSTEM_LAYOUT"] = "1"
+
 from PyQt5 import QtWidgets, QtGui, QtCore, QtSvg
 import sys
-import os
+import csv
 import random
 import math
 import time
@@ -10,6 +14,7 @@ from PIL import Image
 import cairosvg
 from scipy.optimize import linear_sum_assignment
 import logging
+import threading
 
 # --- Logging setup ---
 def setup_logging(log_path, file_level=logging.DEBUG, console_level=logging.INFO):
@@ -32,6 +37,14 @@ def setup_logging(log_path, file_level=logging.DEBUG, console_level=logging.INFO
     logger.addHandler(fh)
     logger.addHandler(ch)
     logging.debug("Logging initialized: file=%s, file_level=%s, console_level=%s", log_path, file_level, console_level)
+
+def setup_experiment_logging():
+    """
+    Set up logging for the experiment session before any experiments run.
+    """
+    log_path = os.path.join(os.path.dirname(__file__), "experiment.log")
+    setup_logging(log_path, file_level=logging.INFO, console_level=logging.INFO)
+    logging.info("Logging initialized for experiment session.")
 
 def scatter_icons_around_center(center_x, center_y, distances, n_items=5):
     """
@@ -216,6 +229,55 @@ def pick_random_base_image(test_type):
         raise FileNotFoundError(f"No PNG images found in {base_dir}")
     return os.path.join(base_dir, random.choice(pngs))
 
+def get_easy_spatial_question():
+    """
+    Returns a random (question, answer) tuple about spatial, map, or cartographic logic.
+    All answers are one word, require spatial or map reasoning, and are not trivia.
+    """
+    qa = [
+        ("If you face north and turn right, which direction are you facing?", "east"),
+        ("On a standard map, what direction is to the left?", "west"),
+        ("If you walk south, then west, then north, which direction must you walk to return?", "east"),
+        ("A river flows from north to south. If you stand on the east bank, which way is west?", "across"),
+        ("If you are in the center of a square and walk to a corner, what shape is your path?", "diagonal"),
+        ("If you move from the bottom left to the top right of a map, which direction are you moving?", "northeast"),
+        ("If you rotate a map 180 degrees, which direction does north point?", "south"),
+        ("If you are facing east and turn left, which direction are you facing?", "north"),
+        ("If you are at the intersection of two perpendicular roads, what angle do they form?", "right"),
+        ("If you walk in a circle and end where you started, what is your displacement?", "zero"),
+        ("If you fold a square map in half, what shape do you get?", "rectangle"),
+        ("If you are at the north pole, which direction is south?", "all"),
+        ("If you are in a rectangular room and walk from one corner to the opposite, what is the shortest path?", "diagonal"),
+        ("If you face west and turn around, which direction are you facing?", "east"),
+        ("If you are in the center of a compass rose, how many cardinal directions are there?", "four"),
+        ("If you walk north, then east, then south, what direction is left to return?", "west"),
+        ("If you are on a map and move up, which direction are you going?", "north"),
+        ("If you are in a triangle and walk along all sides, how many turns do you make?", "three"),
+        ("If you are at the equator and move north, what hemisphere are you in?", "northern"),
+        ("If you are at the center of a circle and move to the edge, what is the path called?", "radius"),
+        ("If you are at the intersection of two straight roads, what shape do they form?", "cross"),
+        ("If you are in a cube and move from one corner to the farthest, what is the path called?", "diagonal"),
+        ("If you are on a map and move down, which direction are you going?", "south"),
+        ("If you are on a map and move right, which direction are you going?", "east"),
+        ("If you are in a square and walk all four sides, what shape do you make?", "square"),
+        ("If you are at the center of a clock and point to 3, which direction is that?", "east"),
+        ("If you are at the center of a clock and point to 12, which direction is that?", "north"),
+        ("If you are at the center of a clock and point to 6, which direction is that?", "south"),
+        ("If you are at the center of a clock and point to 9, which direction is that?", "west"),
+        ("If you are on a map and move left, which direction are you going?", "west"),
+        ("If you are at the intersection of three roads, what is the shape called?", "t"),
+        ("If you are in a rectangle and walk from one short side to the other, what is the path called?", "width"),
+        ("If you are in a rectangle and walk from one long side to the other, what is the path called?", "length"),
+        ("If you are at the center of a circle and draw a line to the edge, what is that line called?", "radius"),
+        ("If you are at the edge of a circle and draw a line through the center to the other edge, what is that line called?", "diameter"),
+        ("If you are in a triangle and walk from one corner to the midpoint of the opposite side, what is the path called?", "median"),
+        ("If you are in a square and connect two opposite corners, what is the line called?", "diagonal"),
+        ("If you are in a cube and connect two opposite corners, what is the line called?", "diagonal"),
+        ("If you are in a pentagon and connect every other corner, what shape do you make?", "star"),
+        ("If you are in a circle and walk all the way around, what is the path called?", "circumference"),
+    ]
+    return random.choice(qa)
+
 def run_experiment(
     participant_name,
     test_type,
@@ -230,7 +292,10 @@ def run_experiment(
     n_icons=5,
     distances=None,
     icon_display_time_sec_tuple=(25, 15, 25),  # (icons, question, guess)
-    results_path=None
+    results_path=None,
+    screen=None,
+    screen_width=None,
+    screen_height=None
 ):
     """
     Run a single experiment session.
@@ -242,21 +307,26 @@ def run_experiment(
         results_path = os.path.join(os.path.dirname(__file__), "results.json")
 
     # --- Logging ---
-    log_path = os.path.join(os.path.dirname(__file__), "experiment.log")
-    setup_logging(log_path, file_level=log_file_level, console_level=log_console_level)
-    logging.info("Experiment started")
+    logging.info("| Experiment started")
     ensure_svg_icons_converted_to_png(rebuild_svg=rebuild_svg, png_res=png_res)
-    pygame.init()
-    info = pygame.display.Info()
-    screen_width, screen_height = info.current_w, info.current_h
-    screen = pygame.display.set_mode((screen_width, screen_height), pygame.FULLSCREEN)
-    pygame.display.set_caption("Experiment")
-    logging.info(f"Screen size: {screen_width}x{screen_height} px")
-    logging.info(f"Screen physical size (if known): {screen_width / 96 * 2.54:.1f}cm x {screen_height / 96 * 2.54:.1f}cm (assuming 96 DPI)")
-    logging.info(f"Configured image size: {image_size_cm} cm, PNG icon resolution: {png_res}px")
+    # Remove pygame.init() and display setup here
+    if screen is None or screen_width is None or screen_height is None:
+        pygame.init()
+        info = pygame.display.Info()
+        screen_width, screen_height = info.current_w, info.current_h
+        screen = pygame.display.set_mode((screen_width, screen_height), pygame.FULLSCREEN)
+        pygame.display.set_caption("Experiment")
+    logging.info(f"| Screen size: {screen_width}x{screen_height} px")
+    logging.info(f"| Screen physical size (if known): {screen_width / 96 * 2.54:.1f}cm x {screen_height / 96 * 2.54:.1f}cm (assuming 96 DPI)")
+    logging.info(f"| Configured image size: {image_size_cm} cm, PNG icon resolution: {png_res}px")
 
     # --- Pick base image for test_type ---
     image_path = pick_random_base_image(test_type)
+    logging.info(f"| Picked base image: {image_path}")
+
+    # --- Get easy spatial question ---
+    question, correct_answer = get_easy_spatial_question()
+    logging.info(f"| Selected spatial question: {question} (answer: {correct_answer})")
 
     # --- Calculate image height in pixels for image_size_cm ---
     try:
@@ -291,12 +361,13 @@ def run_experiment(
 
     # --- Load resources ---
     img = display_image_fullscreen(image_path, image_height_px)
+    logging.info(f"| Loaded base image for display")
     icon_surfaces = load_icon_surfaces(icon_size_px)
     icon_surface_paths = [
         os.path.join(os.path.dirname(__file__), "res", "icons", f)
         for f in sorted([f for f in os.listdir(os.path.join(os.path.dirname(__file__), "res", "icons")) if f.lower().endswith('.png')])
     ]
-    logging.info(f"Loaded {len(icon_surfaces)} icon surfaces")
+    logging.info(f"| Loaded {len(icon_surfaces)} icon surfaces")
 
     # --- State ---
     phase = "icons"
@@ -307,16 +378,19 @@ def run_experiment(
     running = True
     font = pygame.font.SysFont(None, 36)
     input_font = pygame.font.SysFont(None, 48)
-    question = "Placeholder question: Please type anything and press Enter."
     input_text = ""
     esc_counter = 0
+
+    # --- Question phase logic variables ---
+    incorrect_attempts = 0
+    question_locked_until = 0  # timestamp until which input is locked after wrong answer
 
     # --- Icon scatter ---
     center_x, center_y = screen_width // 2, screen_height // 2
     icon_coords = scatter_icons_around_center(center_x, center_y, distances, n_icons)
     icon_assignments = [random.choice(icon_surfaces) for _ in range(n_icons)]
     icon_assignment_paths = [icon_surface_paths[icon_surfaces.index(icon)] for icon in icon_assignments]
-    logging.debug(f"Icon coordinates: {icon_coords}")
+    logging.debug(f"| Icon coordinates: {icon_coords}")
 
     # --- Timers ---
     # Use tuple for phase durations
@@ -377,12 +451,12 @@ def run_experiment(
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                logging.info("Received QUIT event")
+                logging.info("| Received QUIT event")
                 running = False
             elif event.type == pygame.KEYDOWN:
                 if phase == "icons":
                     if event.key == pygame.K_RETURN:
-                        logging.info("Phase changed: icons -> question")
+                        logging.info("| Phase changed: icons -> question")
                         phase = "question"
                         input_text = ""
                         phase_start_time = time.time()
@@ -390,39 +464,55 @@ def run_experiment(
                     elif event.key == pygame.K_ESCAPE:
                         esc_counter += 1
                         if esc_counter >= 3:
-                            logging.info("Escape pressed 3 times, exiting")
-                            running = False
+                            logging.info("| Escape pressed 3 times, exiting ENTIRE SESSION")
+                            return None  # <--- Return None to signal abort
                     else:
                         esc_counter = 0
                 elif phase == "question":
+                    if now < question_locked_until:
+                        continue  # Ignore input while locked
                     if event.key == pygame.K_RETURN:
-                        question_answer = input_text
-                        logging.info(f"Question answered: {question_answer}")
-                        input_text = ""
-                        phase = "guess"
-                        logging.info("Phase changed: question -> guess")
-                        phase_start_time = time.time()
-                        phase_end_time = phase_start_time + guess_phase_duration
+                        if input_text.strip().lower() == correct_answer.lower():
+                            question_answer = input_text
+                            logging.info(f"| Question answered correctly: {question_answer}")
+                            input_text = ""
+                            phase = "guess"
+                            logging.info("| Phase changed: question -> guess")
+                            phase_start_time = time.time()
+                            phase_end_time = phase_start_time + guess_phase_duration
+                        else:
+                            incorrect_attempts += 1
+                            logging.info(f"| Incorrect answer attempt {incorrect_attempts}: {input_text}")
+                            if incorrect_attempts >= 3:
+                                logging.info("| Three incorrect answers, moving to guess phase")
+                                question_answer = input_text
+                                input_text = ""
+                                phase = "guess"
+                                phase_start_time = time.time()
+                                phase_end_time = phase_start_time + guess_phase_duration
+                            else:
+                                question_locked_until = now + 3  # Lock input for 3 seconds
+                                input_text = ""  # Clear input so user can start fresh
                     elif event.key == pygame.K_BACKSPACE:
                         input_text = input_text[:-1]
                     elif event.key == pygame.K_ESCAPE:
                         esc_counter += 1
                         if esc_counter >= 3:
-                            logging.info("Escape pressed 3 times, exiting")
-                            running = False
+                            logging.info("| Escape pressed 3 times, exiting ENTIRE SESSION")
+                            return None  # <--- Return None to signal abort
                     else:
                         esc_counter = 0
                         if event.unicode and len(event.unicode) == 1:
                             input_text += event.unicode
                 elif phase == "guess":
                     if event.key == pygame.K_RETURN:
-                        logging.info("Experiment finished, exiting")
+                        logging.info("| Experiment finished, exiting")
                         running = False
                     elif event.key == pygame.K_ESCAPE:
                         esc_counter += 1
                         if esc_counter >= 3:
-                            logging.info("Escape pressed 3 times, exiting")
-                            running = False
+                            logging.info("| Escape pressed 3 times, exiting ENTIRE SESSION")
+                            return None  # <--- Return None to signal abort
                     else:
                         esc_counter = 0
             elif event.type == pygame.MOUSEBUTTONDOWN and phase == "guess":
@@ -430,13 +520,13 @@ def run_experiment(
                 if event.button == 1:  # Left click to add
                     if len(guesses) < n_icons:
                         guesses.append((mx, my))
-                        logging.info(f"Guess added at ({mx}, {my})")
+                        logging.info(f"| Guess added at ({mx}, {my})")
                 elif event.button == 3:  # Right click to remove nearest
                     if guesses:
                         dists = [math.hypot(mx - gx, my - gy) for gx, gy in guesses]
                         idx = dists.index(min(dists))
                         removed = guesses.pop(idx)
-                        logging.info(f"Guess removed at {removed}")
+                        logging.info(f"| Guess removed at {removed}")
 
         # --- Phase logic ---
         if phase == "icons":
@@ -453,7 +543,7 @@ def run_experiment(
                 input_text = ""
                 phase_start_time = time.time()
                 phase_end_time = phase_start_time + question_phase_duration
-                logging.info("Icon phase timed out, moving to question phase")
+                logging.info("| Icon phase timed out, moving to question phase")
             # Draw timer at bottom
             instr = "Press Enter to continue, Esc x3 to exit"
             t_surf = font.render(f"{instr} | {timer_text}", True, (200, 200, 200))
@@ -465,6 +555,11 @@ def run_experiment(
             # Draw input text
             insurf = input_font.render(input_text, True, (255, 255, 0))
             screen.blit(insurf, (center_x - insurf.get_width() // 2, center_y))
+            # Show feedback if locked
+            if now < question_locked_until:
+                lock_msg = f"Incorrect! Try again in {int(question_locked_until - now)}s"
+                locksurf = font.render(lock_msg, True, (255, 80, 80))
+                screen.blit(locksurf, (center_x - locksurf.get_width() // 2, center_y + 60))
             # Timer: auto-advance
             if now >= phase_end_time:
                 question_answer = input_text
@@ -472,7 +567,7 @@ def run_experiment(
                 phase = "guess"
                 phase_start_time = time.time()
                 phase_end_time = phase_start_time + guess_phase_duration
-                logging.info("Question phase timed out, moving to guess phase")
+                logging.info("| Question phase timed out, moving to guess phase")
             # Draw timer at bottom
             instr = "Type answer, Enter to continue, Esc x3 to exit"
             t_surf = font.render(f"{instr} | {timer_text}", True, (200, 200, 200))
@@ -491,7 +586,7 @@ def run_experiment(
                 draw_debug_overlay(exp_result, screen, icon_size_px, font, center_x, center_y)
             # Timer: auto-advance
             if now >= phase_end_time:
-                logging.info("Guess phase timed out, finishing experiment")
+                logging.info("| Guess phase timed out, finishing experiment")
                 running = False
             # Draw instructions and timer
             instr = "Left click: add guess, Right click: remove nearest, Enter: finish, Esc x3 to exit"
@@ -501,8 +596,7 @@ def run_experiment(
         pygame.display.flip()
         pygame.time.wait(10)
 
-    pygame.quit()
-    logging.info("Pygame quit, program exiting")
+    # --- DO NOT call pygame.quit() here ---
     # Prepare flat experiment result for saving
     icon_points = [(x, y, angle) for (x, y, angle, dist) in icon_coords]
     icon_attrs = []
@@ -576,7 +670,7 @@ def run_experiment(
     stats = calculate_experiment_statistics(flat_result)
     flat_result["statistics"] = stats
 
-    logging.debug("Experiment result dictionary: %s", flat_result)
+    logging.debug("| Experiment result dictionary: %s", flat_result)
     return flat_result
 
 # --- New statistics function ---
@@ -628,23 +722,31 @@ def calculate_experiment_statistics(flat_result):
     }
     return stats
 
-def merge_to_csv(exp_data, csv_path):
+def merge_to_csv(exp_data, csv_path, user_data):
     """
     Merge experiment data into a CSV file. If file does not exist, create header.
     Columns are named as: {point}{type}_{field}, e.g. 1t_pos_x, 2g_cd_x, 3m_euclidistance.
     Also includes experiment-level statistics.
+    user_data: dict with keys 'age', 'gender', 'codeword'
     """
-    import csv
+    
+    assert isinstance(exp_data, dict), "exp_data must be a dictionary"
+    assert isinstance(csv_path, str), "csv_path must be a string"
+    assert os.path.isdir(os.path.dirname(csv_path)), "Directory for csv_path does not exist"
+    assert isinstance(user_data, dict) or user_data is None, "user_data must be a dictionary or None"
 
     # Prepare row with global experiment info
-    row = {
-        "participant": exp_data["participant"],
+    row = {}
+    row["codeword"] = user_data.get("codeword", "")
+    row["age"] = user_data.get("age", "")
+    row["gender"] = user_data.get("gender", "")
+    row.update({
         "test_type": exp_data["test_type"],
         "n_test": exp_data["n_test"],
         "base_image_path": exp_data["base_image_path"],
         "center_x": exp_data["center_x"],
         "center_y": exp_data["center_y"],
-    }
+    })
 
     # Prepare per-point fields with new naming convention
     point_fields = []
@@ -693,9 +795,12 @@ def merge_to_csv(exp_data, csv_path):
 
     # Extend header with stat keys (if not present)
     stat_keys = list(flat_stats.keys())
-    header = [
-        "participant", "test_type", "n_test", "base_image_path", "center_x", "center_y"
-    ]
+    header = []
+    if user_data:
+        header.extend(["codeword", "age", "gender"])
+    header.extend([
+        "test_type", "n_test", "base_image_path", "center_x", "center_y"
+    ])
     for idx in range(1, n_points + 1):
         header.extend([
             f"{idx}t_pos_x",
@@ -726,34 +831,157 @@ def merge_to_csv(exp_data, csv_path):
         writer.writerow(row)
     logging.info(f"Results saved to CSV: {csv_path}")
 
+def get_participant_info(screen=None, screen_width=None, screen_height=None):
+    """
+    Interactive pygame window to collect participant info: age, gender, codeword.
+    Returns a dict: {"age": ..., "gender": ..., "codeword": ...}
+    """
+    import pygame
+    logging.info("| Starting participant info acquisition")
+    # Only init and set display if not provided
+    if screen is None or screen_width is None or screen_height is None:
+        pygame.init()
+        info = pygame.display.Info()
+        screen_width, screen_height = info.current_w, info.current_h
+        screen = pygame.display.set_mode((screen_width, screen_height), pygame.FULLSCREEN)
+    font = pygame.font.SysFont(None, 48)
+    small_font = pygame.font.SysFont(None, 36)
+    fields = [("Age", ""), ("Gender (M/F/D/O)", ""), ("Pseudonym or codeword of your choosing - be sure to remember it!", "")]
+    field_idx = 0
+    input_active = True
+    input_text = ""
+    esc_counter = 0
+
+    while input_active:
+        screen.fill((30, 30, 30))
+        # Instructions
+        instr = "Please enter your information. Press Enter to confirm each field."
+        instr_surf = small_font.render(instr, True, (200, 200, 200))
+        screen.blit(instr_surf, (screen_width // 2 - instr_surf.get_width() // 2, 80))
+        # Draw fields
+        for i, (label, value) in enumerate(fields):
+            color = (255, 255, 0) if i == field_idx else (255, 255, 255)
+            text = f"{label}: {value}" if i != field_idx else f"{label}: {input_text}"
+            surf = font.render(text, True, color)
+            screen.blit(surf, (screen_width // 2 - surf.get_width() // 2, 200 + i * 80))
+        # Draw submit hint
+        if field_idx >= len(fields):
+            done_surf = font.render("Press Enter to continue...", True, (0, 255, 0))
+            screen.blit(done_surf, (screen_width // 2 - done_surf.get_width() // 2, 200 + len(fields) * 80))
+        pygame.display.flip()
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                logging.info("| Participant info window closed by user")
+                pygame.quit()
+                sys.exit(0)
+            elif event.type == pygame.KEYDOWN:
+                if field_idx < len(fields):
+                    if event.key == pygame.K_RETURN:
+                        logging.info(f"| Field '{fields[field_idx][0]}' entered: {input_text.strip()}")
+                        fields[field_idx] = (fields[field_idx][0], input_text.strip())
+                        input_text = ""
+                        field_idx += 1
+                    elif event.key == pygame.K_BACKSPACE:
+                        input_text = input_text[:-1]
+                    elif event.key == pygame.K_ESCAPE:
+                        esc_counter += 1
+                        if esc_counter >= 3:
+                            logging.info("| Escape pressed 3 times during participant info, exiting")
+                            pygame.quit()
+                            sys.exit(0)
+                    else:
+                        esc_counter = 0
+                        if event.unicode and len(event.unicode) == 1:
+                            input_text += event.unicode
+                else:
+                    if event.key == pygame.K_RETURN:
+                        logging.info("| Participant info acquisition complete, continuing")
+                        input_active = False
+                    elif event.key == pygame.K_ESCAPE:
+                        esc_counter += 1
+                        if esc_counter >= 3:
+                            logging.info("| Escape pressed 3 times during participant info, exiting")
+                            pygame.quit()
+                            sys.exit(0)
+                    else:
+                        esc_counter = 0
+        pygame.time.wait(10)
+
+    # --- Check inputs ---
+    if not fields[0][1].isdigit() or int(fields[0][1]) < 0:
+        logging.info("| Invalid age input detected")
+        raise ValueError("Invalid age input. Please enter a valid number.")
+    if fields[1][1].strip() not in ["M", "F", "D", "O"]:
+        logging.info("| Invalid gender input detected")
+        raise ValueError("Invalid gender input. Please enter 'M' - Male, 'F' - Female, 'D' - Diverse, or 'O' - Other.")
+    if not fields[2][1].strip():
+        logging.info("| Empty codeword input detected")
+        raise ValueError("Codeword cannot be empty. Please enter a valid codeword.")
+
+    logging.info("| Participant info collected: Age=%s, Gender=%s, Codeword=%s", fields[0][1], fields[1][1], fields[2][1])
+    return {
+        "age": fields[0][1],
+        "gender": fields[1][1],
+        "codeword": fields[2][1]
+    }
+
 # --- CLI/Module entry point ---
 def main():
+    # --- Prepare logging ---
+    setup_experiment_logging()
+    logging.info("=== SESSION START ===")
+
+    # --- Initialize pygame and display ONCE ---
+    import pygame
+    pygame.init()
+    info = pygame.display.Info()
+    screen_width, screen_height = info.current_w, info.current_h
+    screen = pygame.display.set_mode((screen_width, screen_height), pygame.FULLSCREEN)
+    pygame.display.set_caption("Experiment")
+
+    # --- Get participant info interactively ---
+    user_data = get_participant_info(screen, screen_width, screen_height)
+
     # --- Experiment configuration (defaults) ---
-    participant_name = "P01"         # Participant name/number
-    test_type = "occluded_circle"    # Test type (folder in /res/base/)
-    n_test = 1                       # Test number
+    participant_name = user_data["codeword"] if user_data.get("codeword") else "unknown"  # Use codeword as participant name
+    test_type = "circle"             # Test type (folder in /res/base/)
     debug = True                     # Enable debug overlay
     rebuild_svg = False              # Rebuild PNGs from SVGs
-    log_file_level = logging.DEBUG   # Log file level
+    log_file_level = logging.INFO    # Log file level
     log_console_level = logging.INFO # Log console level
     results_path = os.path.join(os.path.dirname(__file__), "results.csv")  # Path to results CSV file
-    icon_display_time_sec_tuple = (25, 15, 25)  # Phase times in seconds (icons, question, guess)
+    icon_display_time_sec_tuple = (25, 20, 15)  # Phase times in seconds (icons, question, guess)
 
-    # --- Run experiment session ---
-    exp_data = run_experiment(
-        participant_name=participant_name,
-        test_type=test_type,
-        n_test=n_test,
-        debug=debug,
-        rebuild_svg=rebuild_svg,
-        log_file_level=log_file_level,
-        log_console_level=log_console_level,
-        icon_display_time_sec_tuple=icon_display_time_sec_tuple,
-        results_path=results_path
-    )
+    # --- Start single session ---
+    test_list = ["circle", "circle", "circle", "circle", "circle", "circle", "circle", "square", "square", "square", "square", "square", "square", "square", ]
 
-    # --- Save results to CSV ---
-    merge_to_csv(exp_data, results_path)
+    for i, test_nr in enumerate(test_list):
+        logging.info(f"Experiment {i+1}/{len(test_list)}: {test_nr} START")
+        # Run the experiment for each test type
+        exp_data = run_experiment(
+            participant_name=participant_name,
+            test_type=test_nr,
+            n_test=i + 1,
+            debug=debug,
+            rebuild_svg=rebuild_svg,
+            log_file_level=log_file_level,
+            log_console_level=log_console_level,
+            icon_display_time_sec_tuple=icon_display_time_sec_tuple,
+            results_path=results_path,
+            screen=screen,
+            screen_width=screen_width,
+            screen_height=screen_height
+        )
+        if exp_data is None:
+            logging.warning("Experiment aborted by user (3x ESC). Aborting session.")
+            break  # Abort the entire session loop
+        # Save results to CSV
+        merge_to_csv(exp_data, results_path, user_data)
+        logging.info(f"Experiment {i+1}/{len(test_list)}: {test_nr} END")
+
+    logging.info("=== SESSION END ===")
+    pygame.quit()
 
 if __name__ == "__main__":
     main()
