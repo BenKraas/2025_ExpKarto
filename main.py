@@ -93,25 +93,6 @@ def display_image_fullscreen(image_path, image_height_cm):
 	main_layout.setContentsMargins(0, 0, 0, 0)
 	main_layout.setSpacing(0)
 
-	# Left panel
-	left_panel = QtWidgets.QWidget(window)
-	left_panel.setFixedWidth(220)
-	left_panel.setStyleSheet("background: #222;")
-	left_layout = QtWidgets.QVBoxLayout(left_panel)
-	left_layout.setContentsMargins(20, 20, 20, 20)
-	left_layout.setSpacing(20)
-
-	timer_label = QtWidgets.QLabel("00:00", left_panel)
-	timer_label.setStyleSheet("color: white; font-size: 32px; font-weight: bold;")
-	timer_label.setAlignment(QtCore.Qt.AlignCenter)
-	status_label = QtWidgets.QLabel("Status: Ready", left_panel)
-	status_label.setStyleSheet("color: white; font-size: 18px;")
-	status_label.setAlignment(QtCore.Qt.AlignCenter)
-
-	left_layout.addWidget(timer_label)
-	left_layout.addWidget(status_label)
-	left_layout.addStretch(1)  # for future elements
-
 	# Center panel (image)
 	center_panel = QtWidgets.QWidget(window)
 	center_layout = QtWidgets.QVBoxLayout(center_panel)
@@ -125,19 +106,21 @@ def display_image_fullscreen(image_path, image_height_cm):
 	center_panel.setMinimumWidth(img_size_px)
 	center_panel.setMinimumHeight(img_size_px)
 
-	main_layout.addWidget(left_panel)
+	# Only add center panel to main layout
 	main_layout.addWidget(center_panel)
 	window.setLayout(main_layout)
 
 	window.show()
-	return window, image_label, timer_label, status_label
+	# Remove timer_label and status_label from return
+	return window, image_label
 
 def main():
 	"""
 	Main entry point: shows image, scatters icons, handles key events.
 	"""
 	app = QtWidgets.QApplication(sys.argv)
-	window, image_label, timer_label, status_label = display_image_fullscreen("05_round_cross.png", 35)
+	# Remove timer_label and status_label from assignment
+	window, image_label = display_image_fullscreen("05_round_cross.png", 35)
 
 	def get_center():
 		return window.width() // 2, window.height() // 2
@@ -147,7 +130,7 @@ def main():
 		center_x=0,
 		center_y=0,
 		distances=[110, 220, 330, 440, 550],
-		icon_size_px=36,
+		icon_size_px=24,
 		n_items=5
 	)
 	icon_labels = [[]]
@@ -282,23 +265,23 @@ def main():
 		with open(json_path, "w") as f:
 			json.dump(data, f, indent=2)
 
-	# --- Timer logic ---
-	timer = QtCore.QTimer()
-	timer.setInterval(100)
-	timer_running = {"active": False, "end_time": 0}
+	# --- Remove timer logic and all references to timer_label/status_label ---
+	# timer = QtCore.QTimer()
+	# timer.setInterval(100)
+	# timer_running = {"active": False, "end_time": 0}
 
-	def update_timer():
-		if not timer_running["active"]:
-			return
-		remaining = max(0, int(timer_running["end_time"] - time.time()))
-		mins = remaining // 60
-		secs = remaining % 60
-		timer_label.setText(f"{mins:02d}:{secs:02d}")
-		if remaining <= 0:
-			timer.stop()
-			timer_running["active"] = False
+	# def update_timer():
+	# 	if not timer_running["active"]:
+	# 		return
+	# 	remaining = max(0, int(timer_running["end_time"] - time.time()))
+	# 	mins = remaining // 60
+	# 	secs = remaining % 60
+	# 	timer_label.setText(f"{mins:02d}:{secs:02d}")
+	# 	if remaining <= 0:
+	# 		timer.stop()
+	# 		timer_running["active"] = False
 
-	timer.timeout.connect(update_timer)
+	# timer.timeout.connect(update_timer)
 
 	# --- Icon scatter phase ---
 	def scatter_icons():
@@ -312,8 +295,8 @@ def main():
 		coords = scatter_icons_around_center(**icon_params)
 		icon_labels[0] = [item[3] for item in coords]
 		state["icon_coords"] = coords
-		status_label.setText("Status: Memorize icon locations")
-		timer_label.setText(f"{icon_display_time_sec:02d}:00")
+		# status_label.setText("Status: Memorize icon locations")  # removed
+		# timer_label.setText(f"{icon_display_time_sec:02d}:00")   # removed
 
 	def start_icon_phase():
 		state["phase"] = "icons"
@@ -326,9 +309,9 @@ def main():
 		window.setCursor(QtCore.Qt.ArrowCursor)
 		scatter_icons()
 		state["start_time"] = time.time()
-		timer_running["active"] = True
-		timer_running["end_time"] = time.time() + icon_display_time_sec
-		timer.start()
+		# timer_running["active"] = True  # timer logic can be kept if needed for experiment, but timer_label removed
+		# timer_running["end_time"] = time.time() + icon_display_time_sec
+		# timer.start()
 		QtCore.QTimer.singleShot(icon_display_time_sec * 1000, start_question_phase)
 
 	def start_question_phase():
@@ -339,9 +322,9 @@ def main():
 		question_widget.show()
 		question_input.setFocus()
 		window.setCursor(QtCore.Qt.ArrowCursor)
-		status_label.setText("Status: Answer the question")
-		timer_running["active"] = False
-		timer_label.setText("")
+		# status_label.setText("Status: Answer the question")  # removed
+		# timer_running["active"] = False
+		# timer_label.setText("")  # removed
 
 	def start_guess_phase():
 		state["phase"] = "guess"
@@ -352,8 +335,8 @@ def main():
 		clear_guess_labels()
 		state["guesses"] = []
 		window.setCursor(QtCore.Qt.CrossCursor)
-		status_label.setText("Status: Click to guess icon locations")
-		timer_label.setText("")
+		# status_label.setText("Status: Click to guess icon locations")  # removed
+		# timer_label.setText("")  # removed
 
 	# --- Question input triggers guess phase ---
 	def on_question_enter():
