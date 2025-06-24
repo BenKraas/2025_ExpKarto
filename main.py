@@ -11,7 +11,7 @@ import time
 import pygame
 import io
 from PIL import Image
-import cairosvg
+
 from scipy.optimize import linear_sum_assignment
 import logging
 import threading
@@ -85,10 +85,12 @@ def ensure_svg_icons_converted_to_png(rebuild_svg=False, png_res=128):
     If rebuild_svg is True, always rebuild PNGs. Otherwise, skip if PNG exists.
     png_res: output PNG size (width and height in px).
     """
-    if cairosvg is None:
-        logging.error("cairosvg is required for SVG to PNG conversion. Please install it.")
-        print("cairosvg is required for SVG to PNG conversion. Please install it.")
-        sys.exit(1)
+    try:
+        import cairosvg
+    except Exception as e:
+        cairosvg = None
+        logging.warning("cairosvg not available, cannot convert SVG to PNG. Install cairosvg to enable this feature.")
+        return
 
     icons_dir = os.path.join(os.path.dirname(__file__), "res", "icons")
     for fname in os.listdir(icons_dir):
@@ -97,11 +99,15 @@ def ensure_svg_icons_converted_to_png(rebuild_svg=False, png_res=128):
             png_name = os.path.splitext(fname)[0] + ".png"
             png_path = os.path.join(icons_dir, png_name)
             if rebuild_svg or not os.path.exists(png_path):
+                if cairosvg is None:
+                    logging.error("cairosvg is required for SVG to PNG conversion. Please install it.")
+                    print("cairosvg is required for SVG to PNG conversion. Please install it.")
+                    sys.exit(1)
                 logging.info(f"Converting {fname} to {png_name}...")
                 png_bytes = cairosvg.svg2png(url=svg_path, output_width=png_res, output_height=png_res)
                 pil_img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
                 pil_img.save(png_path)
-            # else: print(f"PNG for {fname} already exists, skipping.")
+    return
 
 def optimal_icon_guess_assignment(icon_points, guesses):
     """
@@ -234,52 +240,70 @@ def pick_random_base_image(test_type):
 
 def get_easy_spatial_question():
     """
-    Returns a random (question, answer) tuple about spatial, map, or cartographic logic.
-    All answers are one word, require spatial or map reasoning, and are not trivia.
+    Returns a random (question, answer) tuple about spatial reasoning and map logic.
+    Questions focus on visualization, direction, and spatial relationships.
+    All answers are simple and based on logical thinking, not memorized facts.
     """
     qa = [
-        ("If you face north and turn right, which direction are you facing?", "east"),
-        ("On a standard map, what direction is to the left?", "west"),
-        ("If you walk south, then west, then north, which direction must you walk to return?", "east"),
-        ("A river flows from north to south. If you stand on the east bank, which way is west?", "across"),
-        ("If you are in the center of a square and walk to a corner, what shape is your path?", "diagonal"),
-        ("If you move from the bottom left to the top right of a map, which direction are you moving?", "northeast"),
-        ("If you rotate a map 180 degrees, which direction does north point?", "south"),
-        ("If you are facing east and turn left, which direction are you facing?", "north"),
-        ("If you are at the intersection of two perpendicular roads, what angle do they form?", "right"),
-        ("If you walk in a circle and end where you started, what is your displacement?", "zero"),
-        ("If you fold a square map in half, what shape do you get?", "rectangle"),
-        ("If you are at the north pole, which direction is south?", "all"),
-        ("If you are in a rectangular room and walk from one corner to the opposite, what is the shortest path?", "diagonal"),
-        ("If you face west and turn around, which direction are you facing?", "east"),
-        ("If you are in the center of a compass rose, how many cardinal directions are there?", "four"),
-        ("If you walk north, then east, then south, what direction is left to return?", "west"),
-        ("If you are on a map and move up, which direction are you going?", "north"),
-        ("If you are in a triangle and walk along all sides, how many turns do you make?", "three"),
-        ("If you are at the equator and move north, what hemisphere are you in?", "northern"),
-        ("If you are at the center of a circle and move to the edge, what is the path called?", "radius"),
-        ("If you are at the intersection of two straight roads, what shape do they form?", "cross"),
-        ("If you are in a cube and move from one corner to the farthest, what is the path called?", "diagonal"),
-        ("If you are on a map and move down, which direction are you going?", "south"),
-        ("If you are on a map and move right, which direction are you going?", "east"),
-        ("If you are in a square and walk all four sides, what shape do you make?", "square"),
-        ("If you are at the center of a clock and point to 3, which direction is that?", "east"),
-        ("If you are at the center of a clock and point to 12, which direction is that?", "north"),
-        ("If you are at the center of a clock and point to 6, which direction is that?", "south"),
-        ("If you are at the center of a clock and point to 9, which direction is that?", "west"),
-        ("If you are on a map and move left, which direction are you going?", "west"),
-        ("If you are at the intersection of three roads, what is the shape called?", "t"),
-        ("If you are in a rectangle and walk from one short side to the other, what is the path called?", "width"),
-        ("If you are in a rectangle and walk from one long side to the other, what is the path called?", "length"),
-        ("If you are at the center of a circle and draw a line to the edge, what is that line called?", "radius"),
-        ("If you are at the edge of a circle and draw a line through the center to the other edge, what is that line called?", "diameter"),
-        ("If you are in a triangle and walk from one corner to the midpoint of the opposite side, what is the path called?", "median"),
-        ("If you are in a square and connect two opposite corners, what is the line called?", "diagonal"),
-        ("If you are in a cube and connect two opposite corners, what is the line called?", "diagonal"),
-        ("If you are in a pentagon and connect every other corner, what shape do you make?", "star"),
-        ("If you are in a circle and walk all the way around, what is the path called?", "circumference"),
+        # Grundlegende Richtung und Orientierung
+        ("Du blickst nach Norden.\nWenn du 90 Grad nach rechts drehst\nin welche Richtung blickst du jetzt?", ["Osten"]),
+        ("Du blickst nach Süden.\nWenn du dich komplett umdrehst\nin welche Richtung blickst du jetzt?", ["Norden", "Süden"]),
+        ("Du blickst nach Osten.\nWenn du 90 Grad nach links drehst\nin welche Richtung blickst du jetzt?", ["Norden"]),
+        ("Du blickst nach Westen.\nWenn du dich 180 Grad drehst\nin welche Richtung blickst du jetzt?", ["Osten"]),
+        
+        # Kartenlesen und Navigation
+        ("Auf einer Standardkarte, auf der Norden oben ist\nin welche Richtung ist deine linke Seite?", ["Westen"]),
+        ("Auf einer Standardkarte, auf der Norden oben ist\nin welche Richtung ist deine rechte Seite?", ["Osten"]),
+        ("Auf einer Standardkarte, auf der Norden oben ist\nin welche Richtung ist unten?", ["Süden"]),
+        ("Wenn du von der unteren linken Ecke zur oberen rechten Ecke einer Karte gehst,\nin welche Richtung reist du?", ["Nordosten"]),
+        ("Wenn du von der oberen linken Ecke zur unteren rechten Ecke einer Karte gehst,\nin welche Richtung reist du?", ["Südosten"]),
+        
+        # Pfad- und Routenlogik
+        ("Du gehst 10 Schritte nach Osten, dann 10 Schritte nach Norden.\nIn welche Richtung solltest du zuerst gehen?", ["Süden", "Westen", "Südwesten"]),
+        ("Du gehst nach Süden, dann nach Westen, dann nach Norden.\nWelche Richtung macht deinen Weg zurück zum Start?", ["Osten"]),
+        ("Du gehst 5 Minuten nach Norden, dann 5 Minuten nach Osten.\nWenn du zurück zu deinem Start gehst, in welche Richtung gehst du?", ["Southwest"]),
+        
+        # Form- und Geometrielogik
+        ("Du stehst im Zentrum eines quadratischen Raumes.\nWenn du geradewegs in eine Ecke gehst\nwelche Art von Linie ist dein Weg?", ["diagonal", "diagonale"]),
+        ("Du bist an einem Rand eines Kreises.\nWenn du durch das Zentrum zum gegenüberliegenden Rand gehst\nwie nennt man diese Strecke?", ["Durchmesser"]),
+        ("Du faltest ein quadratisches Blatt Papier genau in der Mitte.\nWelche Form hast du jetzt?", ["Rechteck"]),
+        
+        # Koordinaten- und Positionslogik
+        ("Du bist am Äquator.\nWenn du nach Norden gehst, welches Hemisphären betrittst du?", ["Nordhalbkugel"]),
+        ("Du bist am Äquator.\nWenn du nach Süden gehst, welches Hemisphären betrittst du?", ["Südhalbkugel"]),
+        ("Du stehst am Nordpol.\nWenn du in irgendeine Richtung blickst, wo ist Süden?", ["jede", "alle", "unten"]),
+        ("Du stehst am Südpol.\nWenn du in irgendeine Richtung blickst, wo ist Norden?", ["jede", "alle", "unten"]),
+        
+        # Uhrzeit- und Winkelbeziehungen
+        ("Stell dir vor, du bist im Zentrum eines Zifferblatts.\nWenn du auf 3 Uhr zeigst, welche Himmelsrichtung ist das?", ["Osten"]),
+        ("Stell dir vor, du bist im Zentrum eines Zifferblatts.\nWenn du auf 12 Uhr zeigst, welche Himmelsrichtung ist das?", ["Norden"]),
+        ("Stell dir vor, du bist im Zentrum eines Zifferblatts.\nWenn du auf 6 Uhr zeigst, welche Himmelsrichtung ist das?", ["Süden"]),
+        ("Stell dir vor, du bist im Zentrum eines Zifferblatts.\nWenn du auf 9 Uhr zeigst, welche Himmelsrichtung ist das?", ["Westen"]),
+        
+        # Drehung und Transformation
+        ("Du hast eine Karte, bei der Norden nach oben zeigt.\nWenn du sie um 180 Grad drehst,\nin welche Richtung zeigt Norden jetzt?", ["unten", "Süden"]),
+        ("Du hast einen Kompass, der alle vier Hauptrichtungen anzeigt.\nWie viele Hauptrichtungen zeigt er?", ["vier"]),
+        
+        # Mehrstufige räumliche Logik
+        ("Du läufst ein Dreieck ab und kehrst zu deinem Ausgangspunkt zurück.\nWie viele Wendungen machst du?", ["drei", "zwei"]),
+        ("Du läufst ein Viereck ab und kehrst zu deinem Ausgangspunkt zurück.\nWie viele Wendungen machst du?", ["vier", "drei"]),
+        ("Du bist in einem würfelförmigen Raum.\nWenn du von einer Ecke zur weitesten Ecke gehst,\nwelche Art von Pfad ist das?", ["diagonal", "diagonale"]),
+        
+        # Distanz- und Messlogik
+        ("Du bist im Zentrum eines Kreises.\nAlle Punkte am Rand haben die gleiche was von dir?", ["Entfernung", "Distanz"]),
+        ("Du gehst vollständig um den äußeren Rand eines Kreises.\nWie nennt man die zurückgelegte Strecke?", ["Umfang"]),
+        
+        # Fortgeschrittene räumliche Überlegungen
+        ("Du schaust auf ein Quadrat.\nWenn du eine Linie ziehst, die zwei gegenüberliegende Ecken verbindet,\nwie nennt man diese Linie?", ["diagonal", "diagonale"]),
+        ("Du startest nach Norden und machst vier 90-Grad-Rechtsdrehungen.\nIn welche Richtung blickst du jetzt?", ["Norden"]),
+        ("Du startest bei Punkt A und gehst zu Punkt B, dann zu Punkt C, dann zurück zu Punkt A.\nWelche Form hast du nachgezeichnet?", ["Dreieck"]),
     ]
-    return random.choice(qa)
+    
+    q, a = random.choice(qa)
+    # Ensure answer is always a list for consistency
+    if isinstance(a, str):
+        a = [a]
+    return q, a
 
 def run_experiment(
     participant_name,
@@ -291,14 +315,15 @@ def run_experiment(
     log_console_level=logging.INFO,
     image_size_cm=30,
     png_res=128,
-    icon_size_px=24,
+    icon_size_px=36,
     n_icons=5,
     distances=None,
     icon_display_time_sec_tuple=(25, 15, 25),  # (icons, question, guess)
     results_path=None,
     screen=None,
     screen_width=None,
-    screen_height=None
+    screen_height=None,
+    show_info_text=True,  # <--- NEW PARAMETER
 ):
     """
     Run a single experiment session.
@@ -328,8 +353,8 @@ def run_experiment(
     logging.info(f"| Picked base image: {image_path}")
 
     # --- Get easy spatial question ---
-    question, correct_answer = get_easy_spatial_question()
-    logging.info(f"| Selected spatial question: {question} (answer: {correct_answer})")
+    question, correct_answers = get_easy_spatial_question()
+    logging.info(f"| Selected spatial question: {question} (answers: {correct_answers})")
 
     # --- Calculate image height in pixels for image_size_cm ---
     try:
@@ -385,6 +410,15 @@ def run_experiment(
     # --- Question phase logic variables ---
     incorrect_attempts = 0
     question_locked_until = 0  # timestamp until which input is locked after wrong answer
+
+    # --- Correct answer feedback state ---
+    correct_feedback_until = 0  # timestamp until which to show green feedback
+    correct_feedback_active = False
+    empty_input_feedback_until = 0  # timestamp for empty input feedback
+
+    # --- Grace period and debounce state ---
+    phase_grace_until = 0  # timestamp until which Enter is ignored after phase change
+    last_enter_time = 0    # for debounce: last time Enter was processed
 
     # --- Icon scatter ---
     center_x, center_y = screen_width // 2, screen_height // 2
@@ -450,11 +484,25 @@ def run_experiment(
         remaining = max(0, int(phase_end_time - now))
         timer_text = f"Time: {int(elapsed)}s / {int(phase_end_time - phase_start_time)}s (left: {remaining}s)"
 
+        # --- Handle phase grace period ---
+        # If just entered a phase, set grace period
+        if phase_grace_until == 0:
+            phase_grace_until = now + 3  # 3 seconds grace at phase start
+
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 logging.info("| Received QUIT event")
                 running = False
             elif event.type == pygame.KEYDOWN:
+                # Debounce Enter: only process if enough time since last Enter
+                is_enter = event.key == pygame.K_RETURN
+                enter_allowed = (not is_enter) or (now > phase_grace_until and now - last_enter_time > 0.2)
+                if not enter_allowed:
+                    continue  # Ignore Enter if grace period or debounce
+
+                if is_enter:
+                    last_enter_time = now  # Update debounce timestamp
+
                 if phase == "icons":
                     if event.key == pygame.K_RETURN:
                         logging.info("| Phase changed: icons -> question")
@@ -462,6 +510,7 @@ def run_experiment(
                         input_text = ""
                         phase_start_time = time.time()
                         phase_end_time = phase_start_time + question_phase_duration
+                        phase_grace_until = phase_start_time + 3  # Set grace period for new phase
                     elif event.key == pygame.K_ESCAPE:
                         esc_counter += 1
                         if esc_counter >= 3:
@@ -470,17 +519,20 @@ def run_experiment(
                     else:
                         esc_counter = 0
                 elif phase == "question":
-                    if now < question_locked_until:
-                        continue  # Ignore input while locked
+                    if now < question_locked_until or correct_feedback_active or now < empty_input_feedback_until:
+                        continue  # Ignore input while locked or feedback active
                     if event.key == pygame.K_RETURN:
-                        if input_text.strip().lower() == correct_answer.lower():
+                        user_ans = input_text.strip().lower()
+                        if not user_ans:
+                            # Empty input: show feedback
+                            empty_input_feedback_until = now + 2
+                            continue
+                        if any(user_ans == ans.strip().lower() for ans in correct_answers):
                             question_answer = input_text
                             logging.info(f"| Question answered correctly: {question_answer}")
                             input_text = ""
-                            phase = "guess"
-                            logging.info("| Phase changed: question -> guess")
-                            phase_start_time = time.time()
-                            phase_end_time = phase_start_time + guess_phase_duration
+                            correct_feedback_active = True
+                            correct_feedback_until = now + 2  # Show green feedback for 2 seconds
                         else:
                             incorrect_attempts += 1
                             logging.info(f"| Incorrect answer attempt {incorrect_attempts}: {input_text}")
@@ -491,8 +543,9 @@ def run_experiment(
                                 phase = "guess"
                                 phase_start_time = time.time()
                                 phase_end_time = phase_start_time + guess_phase_duration
+                                phase_grace_until = phase_start_time + 3  # Set grace period for new phase
                             else:
-                                question_locked_until = now + 3  # Lock input for 3 seconds
+                                question_locked_until = now + 5  # Lock input for 3 seconds
                                 input_text = ""  # Clear input so user can start fresh
                     elif event.key == pygame.K_BACKSPACE:
                         input_text = input_text[:-1]
@@ -549,35 +602,64 @@ def run_experiment(
                 input_text = ""
                 phase_start_time = time.time()
                 phase_end_time = phase_start_time + question_phase_duration
+                phase_grace_until = phase_start_time + 3  # Set grace period for new phase
                 logging.info("| Icon phase timed out, moving to question phase")
             # Draw timer at bottom
-            instr = "Press Enter to continue, Esc x3 to exit"
-            t_surf = font.render(f"{instr} | {timer_text}", True, (200, 200, 200))
-            screen.blit(t_surf, (center_x - t_surf.get_width() // 2, screen_height - 60))
+            if show_info_text:
+                instr = "Press Enter to continue, Esc x3 to exit"
+                t_surf = font.render(f"{instr} | {timer_text}", True, (200, 200, 200))
+                screen.blit(t_surf, (center_x - t_surf.get_width() // 2, screen_height - 60))
         elif phase == "question":
-            # Draw question text
-            qsurf = font.render(question, True, (255, 255, 255))
-            screen.blit(qsurf, (center_x - qsurf.get_width() // 2, center_y - 100))
-            # Draw input text
-            insurf = input_font.render(input_text, True, (255, 255, 0))
-            screen.blit(insurf, (center_x - insurf.get_width() // 2, center_y))
-            # Show feedback if locked
-            if now < question_locked_until:
-                lock_msg = f"Incorrect! Try again in {int(question_locked_until - now)}s"
-                locksurf = font.render(lock_msg, True, (255, 80, 80))
-                screen.blit(locksurf, (center_x - locksurf.get_width() // 2, center_y + 60))
+            # Draw question text (support line breaks)
+            q_lines = question.split('\n')
+            y0 = center_y - 100 - (len(q_lines)-1)*22  # Adjust vertical position for multiple lines
+
+            # --- Correct answer feedback (green) ---
+            if correct_feedback_active:
+                if now < correct_feedback_until:
+                    for i, qline in enumerate(q_lines):
+                        qsurf = font.render(qline, True, (0, 255, 0))
+                        screen.blit(qsurf, (center_x - qsurf.get_width() // 2, y0 + i*44))
+                    # No input box, just feedback
+                else:
+                    # End feedback, advance phase
+                    correct_feedback_active = False
+                    phase = "guess"
+                    logging.info("| Phase changed: question -> guess (after correct answer feedback)")
+                    phase_start_time = time.time()
+                    phase_end_time = phase_start_time + guess_phase_duration
+                    phase_grace_until = phase_start_time + 3  # Set grace period for new phase
+            else:
+                for i, qline in enumerate(q_lines):
+                    qsurf = font.render(qline, True, (255, 255, 255))
+                    screen.blit(qsurf, (center_x - qsurf.get_width() // 2, y0 + i*44))
+                # Draw input text
+                insurf = input_font.render(input_text, True, (255, 255, 0))
+                screen.blit(insurf, (center_x - insurf.get_width() // 2, center_y))
+                # Show feedback if locked
+                if now < question_locked_until:
+                    lock_msg = f"Incorrect! Try again in {int(question_locked_until - now)}s"
+                    locksurf = font.render(lock_msg, True, (255, 80, 80))
+                    screen.blit(locksurf, (center_x - locksurf.get_width() // 2, center_y + 60))
+                # Show empty input feedback
+                if now < empty_input_feedback_until:
+                    empty_msg = "Bitte gib eine Antwort ein!"
+                    emptysurf = font.render(empty_msg, True, (255, 80, 80))
+                    screen.blit(emptysurf, (center_x - emptysurf.get_width() // 2, center_y + 100))
             # Timer: auto-advance
-            if now >= phase_end_time:
+            if not correct_feedback_active and now >= phase_end_time:
                 question_answer = input_text
                 input_text = ""
                 phase = "guess"
                 phase_start_time = time.time()
                 phase_end_time = phase_start_time + guess_phase_duration
+                phase_grace_until = phase_start_time + 3  # Set grace period for new phase
                 logging.info("| Question phase timed out, moving to guess phase")
             # Draw timer at bottom
-            instr = "Type answer, Enter to continue, Esc x3 to exit"
-            t_surf = font.render(f"{instr} | {timer_text}", True, (200, 200, 200))
-            screen.blit(t_surf, (center_x - t_surf.get_width() // 2, screen_height - 60))
+            if show_info_text:
+                instr = "Type answer, Enter to continue, Esc x3 to exit"
+                t_surf = font.render(f"{instr} | {timer_text}", True, (200, 200, 200))
+                screen.blit(t_surf, (center_x - t_surf.get_width() // 2, screen_height - 60))
         elif phase == "guess":
             # Draw main image
             img_rect = img.get_rect(center=(center_x, center_y))
@@ -595,9 +677,10 @@ def run_experiment(
                 logging.info("| Guess phase timed out, finishing experiment")
                 running = False
             # Draw instructions and timer
-            instr = "Left click: add guess, Right click: remove nearest, Enter: finish, Esc x3 to exit"
-            t_surf = font.render(f"{instr} | {timer_text}", True, (200, 200, 200))
-            screen.blit(t_surf, (center_x - t_surf.get_width() // 2, screen_height - 60))
+            if show_info_text:
+                instr = "Left click: add guess, Right click: remove nearest, Enter: finish, Esc x3 to exit"
+                t_surf = font.render(f"{instr} | {timer_text}", True, (200, 200, 200))
+                screen.blit(t_surf, (center_x - t_surf.get_width() // 2, screen_height - 60))
 
         pygame.display.flip()
         pygame.time.wait(10)
@@ -847,30 +930,39 @@ def get_participant_info(screen=None, screen_width=None, screen_height=None):
         info = pygame.display.Info()
         screen_width, screen_height = info.current_w, info.current_h
         screen = pygame.display.set_mode((screen_width, screen_height), pygame.FULLSCREEN)
+
     font = pygame.font.SysFont(None, 48)
     small_font = pygame.font.SysFont(None, 36)
-    fields = [("Age", ""), ("Gender (M/F/D/O)", ""), ("Pseudonym or codeword of your choosing - be sure to remember it!", "")]
+    fields = [("Alter", ""), ("Geschlecht (M/W/D/O)", ""), ("Ein Codewort/Nutzername etc", "")]
     field_idx = 0
     input_active = True
     input_text = ""
     esc_counter = 0
 
+    # Calculate the height of the full window content to center everything
+    total_height = 80 + len(fields) * 80 + 80  # Padding and spacing
+    y_offset = (screen_height - total_height) // 2  # Center the content vertically
+
     while input_active:
         screen.fill((30, 30, 30))
+        
         # Instructions
-        instr = "Please enter your information. Press Enter to confirm each field."
+        instr = "Bitte gib deine Informationen ein"
         instr_surf = small_font.render(instr, True, (200, 200, 200))
-        screen.blit(instr_surf, (screen_width // 2 - instr_surf.get_width() // 2, 80))
+        screen.blit(instr_surf, (screen_width // 2 - instr_surf.get_width() // 2, y_offset + 20))
+
         # Draw fields
         for i, (label, value) in enumerate(fields):
             color = (255, 255, 0) if i == field_idx else (255, 255, 255)
             text = f"{label}: {value}" if i != field_idx else f"{label}: {input_text}"
             surf = font.render(text, True, color)
-            screen.blit(surf, (screen_width // 2 - surf.get_width() // 2, 200 + i * 80))
+            screen.blit(surf, (screen_width // 2 - surf.get_width() // 2, y_offset + 80 + i * 80))
+
         # Draw submit hint
         if field_idx >= len(fields):
-            done_surf = font.render("Press Enter to continue...", True, (0, 255, 0))
-            screen.blit(done_surf, (screen_width // 2 - done_surf.get_width() // 2, 200 + len(fields) * 80))
+            done_surf = font.render("Drücke Enter, um fortzufahren...", True, (0, 255, 0))
+            screen.blit(done_surf, (screen_width // 2 - done_surf.get_width() // 2, y_offset + 200 + len(fields) * 80))
+
         pygame.display.flip()
 
         for event in pygame.event.get():
@@ -918,12 +1010,12 @@ def get_participant_info(screen=None, screen_width=None, screen_height=None):
     if not fields[0][1].isdigit() or int(fields[0][1]) < 0:
         logging.info("| Invalid age input detected")
         raise ValueError("Invalid age input. Please enter a valid number.")
-    if fields[1][1].strip() not in ["m", "f", "d", "o"]:
+    if fields[1][1].strip() not in ["m", "w", "d", "o"]:
         logging.info("| Invalid gender input detected")
-        raise ValueError("Invalid gender input. Please enter 'M' - Male, 'F' - Female, 'D' - Diverse, or 'O' - Other.")
+        raise ValueError("Ungültige Eingabe für Geschlecht. Bitte gib 'M' - Männlich, 'W' - Weiblich, 'D' - Divers oder 'O' - Sonstiges ein.")
     if not fields[2][1].strip():
         logging.info("| Empty codeword input detected")
-        raise ValueError("Codeword cannot be empty. Please enter a valid codeword.")
+        raise ValueError("Codewort darf nicht leer sein. Bitte gib ein gültiges Codewort ein.")
 
     logging.info("| Participant info collected: Age=%s, Gender=%s, Codeword=%s", fields[0][1], fields[1][1], fields[2][1])
     return {
@@ -931,6 +1023,166 @@ def get_participant_info(screen=None, screen_width=None, screen_height=None):
         "gender": fields[1][1],
         "codeword": fields[2][1]
     }
+
+
+# --- Thank you screen ---
+def show_thank_you_screen(screen):
+    """
+    Displays a thank you screen with a random image from res/trophy in the center.
+    Waits for any key or mouse press to exit.
+    """
+    font = pygame.font.SysFont(None, 72)
+    small_font = pygame.font.SysFont(None, 48)
+    # Load random trophy image
+    trophy_dir = os.path.join(os.path.dirname(__file__), "res", "rewards")
+    trophy_files = [f for f in os.listdir(trophy_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.webm'))]
+    trophy_img = None
+    img_rect = None
+    if trophy_files:
+        trophy_path = os.path.join(trophy_dir, random.choice(trophy_files))
+        trophy_img = pygame.image.load(trophy_path).convert_alpha()
+        # Scale trophy image to fit (max 40% of screen height)
+        sw, sh = screen.get_width(), screen.get_height()
+        max_dim = int(sh * 0.4)
+        img_rect = trophy_img.get_rect()
+        scale_factor = min(max_dim / img_rect.width, max_dim / img_rect.height, 1.0)
+        new_size = (int(img_rect.width * scale_factor), int(img_rect.height * scale_factor))
+        trophy_img = pygame.transform.smoothscale(trophy_img, new_size)
+        img_rect = trophy_img.get_rect()
+    thank_you_active = True
+    while thank_you_active:
+        screen.fill((0, 0, 0))
+        sw, sh = screen.get_width(), screen.get_height()
+        # Calculate positions
+        if trophy_img:
+            img_rect = trophy_img.get_rect()
+            img_rect.center = (sw // 2, sh // 2)
+            # Text above image
+            thank_surf = font.render("Thank you kindly for participating!", True, (255, 255, 0))
+            thank_y = img_rect.top - thank_surf.get_height() - 40
+            if thank_y < 0:
+                thank_y = 20
+            screen.blit(thank_surf, (sw // 2 - thank_surf.get_width() // 2, thank_y))
+            # Draw trophy image
+            screen.blit(trophy_img, img_rect)
+            # Text below image
+            instr_surf = small_font.render("Press any key to exit.", True, (200, 200, 200))
+            instr_y = img_rect.bottom + 40
+            if instr_y + instr_surf.get_height() > sh:
+                instr_y = sh - instr_surf.get_height() - 20
+            screen.blit(instr_surf, (sw // 2 - instr_surf.get_width() // 2, instr_y))
+        else:
+            # If no image, center text vertically
+            thank_surf = font.render("Thank you kindly for participating!", True, (255, 255, 0))
+            instr_surf = small_font.render("Press any key to exit.", True, (200, 200, 200))
+            screen.blit(thank_surf, (sw // 2 - thank_surf.get_width() // 2, sh // 2 - thank_surf.get_height()))
+            screen.blit(instr_surf, (sw // 2 - instr_surf.get_width() // 2, sh // 2 + 20))
+        pygame.display.flip()
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                thank_you_active = False
+            elif event.type == pygame.KEYDOWN or event.type == pygame.MOUSEBUTTONDOWN:
+                thank_you_active = False
+        pygame.time.wait(10)
+
+# --- Simple message screen ---
+def show_simple_message_screen(screen):
+    """
+    Displays a simple message in the center of the screen.
+    Waits for any key or mouse press to exit.
+    """
+    font = pygame.font.SysFont(None, 72)
+    small_font = pygame.font.SysFont(None, 48)
+    
+    message = "The first section of the experiment is over"
+    instruction = "Remove the cover from the screen"
+
+    # Wait for exit event
+    message_active = True
+    while message_active:
+        screen.fill((0, 0, 0))  # Fill the screen with black
+
+        # Get screen width and height
+        sw, sh = screen.get_width(), screen.get_height()
+        
+        # Render the message text
+        message_surf = font.render(message, True, (255, 255, 0))
+        instr_surf = small_font.render(instruction, True, (200, 200, 200))
+
+        # Calculate center positions for the text
+        message_rect = message_surf.get_rect(center=(sw // 2, sh // 2 - 30))
+        instr_rect = instr_surf.get_rect(center=(sw // 2, sh // 2 + 30))
+        
+        # Blit the text to the screen
+        screen.blit(message_surf, message_rect)
+        screen.blit(instr_surf, instr_rect)
+
+        # Update the display
+        pygame.display.flip()
+
+        # Check for any key or mouse press event
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                message_active = False
+            elif event.type == pygame.KEYDOWN or event.type == pygame.MOUSEBUTTONDOWN:
+                message_active = False
+        
+        pygame.time.wait(10)  # Small delay to avoid high CPU usage
+
+# --- Experiment intro screen ---
+def show_experiment_intro_screen(screen):
+    """
+    Zeigt einen Einführungsscreen, der die Phasen des Experiments erklärt.
+    Wartet auf eine beliebige Tasten- oder Maustaste, um fortzufahren.
+    """
+    font = pygame.font.SysFont(None, 60)
+    small_font = pygame.font.SysFont(None, 40)
+    sw, sh = screen.get_width(), screen.get_height()
+    lines = [
+        "Willkommen zum Experiment!",
+        "",
+        "Du wirst mehrere Durchgänge absolvieren, jeder mit drei Phasen:",
+        "",
+        "1. Icon-Phase:",
+        "   - Mehrere Symbole erscheinen auf einer Karte.",
+        "   - Merke dir ihre Positionen.",
+        "",
+        "2. Frage-Phase:",
+        "   - Beantworte eine einfache räumliche Frage.",
+        "   - Keine Stress, du hast ein paar Versuche.",
+        "   - Irgendwann geht es automatisch weiter.",
+        "",
+        "3. Schätz-Phase:",
+        "   - Platziere die Symbole dort, wo du sie erinnerst:",
+        "   - Linksklick: Hinzufügen einer Schätzung",
+        "   - Rechtsklick: Entfernen der nächsten Schätzung",
+        "",
+        "Folge den Anweisungen auf dem Bildschirm.",
+        "",
+        "Drücke Enter nach jedem Schritt - und habe kurz Geduld.",
+        "",
+        "Es gibt kein Tutorial, es geht mit Enter sofort los.",
+        "",
+        "Drücke eine beliebige Taste, um zu beginnen."
+    ]
+    intro_active = True
+    while intro_active:
+        screen.fill((0, 0, 0))
+        y = sh // 2 - (len(lines) * 32) // 2
+        for i, line in enumerate(lines):
+            if i == 0:
+                surf = font.render(line, True, (255, 255, 0))
+            else:
+                surf = small_font.render(line, True, (220, 220, 220))
+            screen.blit(surf, (sw // 2 - surf.get_width() // 2, y))
+            y += surf.get_height() + 4
+        pygame.display.flip()
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                intro_active = False
+            elif event.type == pygame.KEYDOWN or event.type == pygame.MOUSEBUTTONDOWN:
+                intro_active = False
+        pygame.time.wait(10)
 
 # --- CLI/Module entry point ---
 def main():
@@ -948,21 +1200,39 @@ def main():
     # --- Get participant info interactively ---
     user_data = get_participant_info(screen, screen_width, screen_height)
 
+    # --- Show experiment intro screen ---
+    show_experiment_intro_screen(screen)
+
     # --- Experiment configuration (defaults) ---
     participant_name = user_data["codeword"] if user_data.get("codeword") else "unknown"  # Use codeword as participant name
     test_type = "circle"             # Test type (folder in /res/base/)
-    debug = True                     # Enable debug overlay
+    debug = False                     # Enable debug overlay
     rebuild_svg = False              # Rebuild PNGs from SVGs
     log_file_level = logging.INFO    # Log file level
     log_console_level = logging.INFO # Log console level
     results_path = os.path.join(os.path.dirname(__file__), "results.csv")  # Path to results CSV file
-    icon_display_time_sec_tuple = (25, 20, 15)  # Phase times in seconds (icons, question, guess)
+    icon_display_time_sec_tuple = (25, 30, 50)  # Phase times in seconds (icons, question, guess)
+    show_info_text = False            # <--- NEW CONFIGURATION OPTION
 
     # --- Start single session ---
-    test_list = ["circle", "circle", "circle", "circle", "circle", "circle", "circle", "square", "square", "square", "square", "square", "square", "square", ]
+
+    # test list without occlusion
+    test_list = ["circle", "circle", "circle", "circle", "circle", "circle", "circle", "square", "square", "square", "square", "square", "square", "square"]
+
+    # test list with occlusion
+    # test_list = ["occluded_circle", "occluded_circle", "occluded_circle", "occluded_circle", "occluded_circle", "occluded_circle", "occluded_circle"]
+
+    # test list short
+    occlusion_done = False
+    test_list = ["occluded_circle", "occluded_circle", "occluded_circle", "circle", "circle", "circle", "square", "square", "square"]
 
     for i, test_nr in enumerate(test_list):
         logging.info(f"Experiment {i+1}/{len(test_list)}: {test_nr} START")
+
+        if test_nr != "occluded_circle" and occlusion_done == False:
+            occlusion_done = True
+            show_simple_message_screen(screen)
+
         # Run the experiment for each test type
         exp_data = run_experiment(
             participant_name=participant_name,
@@ -976,7 +1246,8 @@ def main():
             results_path=results_path,
             screen=screen,
             screen_width=screen_width,
-            screen_height=screen_height
+            screen_height=screen_height,
+            show_info_text=show_info_text,  # <--- PASS TO FUNCTION
         )
         if exp_data is None:
             logging.warning("Experiment aborted by user (3x ESC). Aborting session.")
@@ -986,6 +1257,9 @@ def main():
         logging.info(f"Experiment {i+1}/{len(test_list)}: {test_nr} END")
 
     logging.info("=== SESSION END ===")
+
+    show_thank_you_screen(screen)
+
     pygame.quit()
 
 if __name__ == "__main__":
